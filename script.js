@@ -1,12 +1,6 @@
-/**
- * ============================================================================
- * SMARTMART – INTEGRATED RETAIL MANAGEMENT SYSTEM
- * Core Application Logic, State Management, POS Billing & Reporting
- * Git Lab 6 Project Submission
- * ============================================================================
- */
 
-// Global App Namespace & State Container
+
+
 const SmartMart = {
   // LocalStorage Keys
   KEYS: {
