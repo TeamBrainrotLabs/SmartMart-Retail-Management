@@ -4,7 +4,7 @@ A centralized, responsive, single-page retail administration and Point-of-Sale (
 
 Developed as a functional demonstration application for **Git Lab 6: Web Application Development and Version Control Submission**.
 
----
+
 
 ## 1. Project Abstract
 
@@ -12,7 +12,7 @@ Traditional retail stores and mid-sized supermarkets often depend on fragmented,
 
 **SmartMart** addresses these challenges by offering an integrated, browser-based retail management dashboard. It consolidates product cataloging, safety stock monitoring, real-time Point of Sale (POS) checkout, supplier replenishment workflow, customer loyalty point accounting, and sales analytics into a unified client-side interface. Running purely on standard web technologies without external server dependencies, SmartMart demonstrates end-to-end retail workflow mechanics using local browser persistence.
 
----
+
 
 ## 2. Problem Statement
 
@@ -22,7 +22,7 @@ Supermarket floor operations require rapid, accurate coordination between cashie
 3. **Customer Retention:** Disconnected checkout counters fail to incentivize repeat patrons through transparent loyalty accruals and point redemptions.
 4. **Lack of Operational Visibility:** Store owners lack immediate financial visibility into daily revenue trends, gross margin estimates, and department-level sales share.
 
----
+
 
 ## 3. Project Objectives
 
@@ -33,7 +33,7 @@ Supermarket floor operations require rapid, accurate coordination between cashie
 - **Executive Sales Analytics:** Deliver visual metrics, revenue trends, top-selling product rankings, and category revenue distribution without requiring a backend database.
 - **Zero-Dependency Portability:** Ensure the entire application runs natively in any standard modern web browser and can be hosted seamlessly on GitHub Pages.
 
----
+
 
 ## 4. Key Features & Modules
 
@@ -97,7 +97,7 @@ Supermarket floor operations require rapid, accurate coordination between cashie
 | :--- | :--- | :--- |
 | **Structure** | HTML5 Semantic Elements | Accessible, standards-compliant layout (`<aside>`, `<header>`, `<main>`, `<section>`). |
 | **Styling** | Vanilla CSS3 (Custom Design System) | Forest-Emerald SaaS aesthetic, responsive flexbox/grid, print stylesheets, zero CSS bloat. |
-| **Logic** | Vanilla JavaScript (ES6+) | Object-oriented modular controllers, event-driven state updates, zero framework build overhead. |
+| **Logic** | Vanilla JavaScript  (ES6+) | Object-oriented modular controllers, event-driven state updates, zero framework build overhead. |
 | **Persistence** | Browser `localStorage` API | Atomic client-side persistence that maintains state across browser reloads without a server. |
 | **Visual Charts** | Chart.js (via CDN) | Lightweight interactive charts for revenue trends, category splits, and bestsellers. |
 | **Iconography** | FontAwesome 6 (via CDN) | Industry-standard retail and interface icons. |
