@@ -206,7 +206,16 @@ To deploy this project to the public internet using GitHub Pages:
 
 ## 11. Project Submission Links
 
-- **GitHub Repository URL:** `[To be added by student]`
-- **Live GitHub Pages URL:** `[To be added by student]`
+- **GitHub Repository URL:** [https://github.com/TeamBrainrotLabs/SmartMart-Retail-Management](https://github.com/TeamBrainrotLabs/SmartMart-Retail-Management)
+- **Live GitHub Pages URL:** [https://teambrainrotlabs.github.io/SmartMart-Retail-Management/](https://teambrainrotlabs.github.io/SmartMart-Retail-Management/)
 - **Course / Lab:** Git Lab 6 – Integrated Web Applications
 - **Submission Date:** October 2026
+
+---
+
+## 12. Version Changelog (Release v2.4.1)
+
+- **Real-Time Digital Clock:** Integrated live store clock in the top header displaying local store operating time with second-by-second updates.
+- **Fast Cashier Hotkeys:** Added keyboard navigation shortcuts (`F2` to focus the barcode scanner, `F4` to trigger instant checkout, `Esc` to dismiss any active modal).
+- **Web Audio Sound Effects:** Synthesized realistic 880Hz scanner beeps on item entry and a multi-tone confirmation chord upon sale completion using the browser's native Web Audio API (with a mute toggle).
+- **Cart Bill Discounts:** Added quick promo chips (0%, 5%, 10%, 15%) allowing cashiers to apply instant order-level discounts alongside customer loyalty point redemptions.

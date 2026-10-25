@@ -142,6 +142,7 @@
           <div class="page-title-group">
             <h1 class="page-title" id="page-title">Store Dashboard</h1>
             <span class="store-badge" id="store-location-badge"><i class="fa-solid fa-location-dot"></i> Branch #01 - Central Market</span>
+            <span class="header-clock-pill" id="header-live-clock"><i class="fa-regular fa-clock"></i> --:--:--</span>
           </div>
         </div>
 
@@ -366,7 +367,14 @@
                   <button id="pos-barcode-add-btn" class="btn btn-primary btn-sm">Add Item</button>
                 </div>
                 <div class="scan-helper-text">
-                  <i class="fa-solid fa-circle-question"></i> Simulator: enter product barcode/SKU or click any item below to add to cart.
+                  <span><i class="fa-solid fa-circle-question"></i> Enter barcode/SKU or click items to add.</span>
+                  <div class="shortcut-pills">
+                    <span class="kbd-pill"><kbd>F2</kbd> Scan</span>
+                    <span class="kbd-pill"><kbd>F4</kbd> Pay</span>
+                    <button type="button" id="pos-audio-toggle-btn" class="btn-icon-subtle" title="Toggle Scanner Audio Beep">
+                      <i class="fa-solid fa-volume-high" id="pos-audio-icon"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -445,6 +453,15 @@
 
               <!-- Order Calculations & Summary -->
               <div class="pos-summary-box">
+                <div class="pos-bill-discount-row">
+                  <span class="disc-label"><i class="fa-solid fa-tag"></i> Order Discount:</span>
+                  <div class="disc-pills" id="pos-discount-pills">
+                    <button type="button" class="disc-pill active" data-disc="0">None</button>
+                    <button type="button" class="disc-pill" data-disc="5">5%</button>
+                    <button type="button" class="disc-pill" data-disc="10">10%</button>
+                    <button type="button" class="disc-pill" data-disc="15">15%</button>
+                  </div>
+                </div>
                 <div class="summary-line">
                   <span>Subtotal</span>
                   <span id="pos-subtotal">₹0.00</span>
@@ -453,8 +470,12 @@
                   <span>Tax (GST 5% Configured)</span>
                   <span id="pos-tax">₹0.00</span>
                 </div>
+                <div class="summary-line text-emerald" id="pos-order-discount-line" style="display:none;">
+                  <span>Promo / Bill Discount</span>
+                  <span id="pos-order-discount">-₹0.00</span>
+                </div>
                 <div class="summary-line text-emerald" id="pos-discount-line" style="display:none;">
-                  <span>Points Discount</span>
+                  <span>Loyalty Points Discount</span>
                   <span id="pos-discount">-₹0.00</span>
                 </div>
                 <div class="summary-line summary-total">

@@ -378,6 +378,20 @@ body.sidebar-collapsed .main-wrapper {
   border: 1px solid var(--primary-100);
 }
 
+.header-clock-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -1200,8 +1214,97 @@ body.sidebar-collapsed .main-wrapper {
   color: var(--text-muted);
   margin-top: 0.45rem;
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.shortcut-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.kbd-pill {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+kbd {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+}
+
+.btn-icon-subtle {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--primary-700);
+  cursor: pointer;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.btn-icon-subtle:hover {
+  background: var(--primary-50);
+  border-color: var(--primary-400);
+}
+
+.pos-bill-discount-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border-light);
+  font-size: 0.78rem;
+}
+
+.disc-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.disc-pills {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.disc-pill {
+  padding: 0.18rem 0.5rem;
+  border-radius: 9999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-body);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.disc-pill:hover {
+  background: var(--bg-subtle);
+}
+
+.disc-pill.active {
+  background: var(--primary-700);
+  color: #ffffff;
+  border-color: var(--primary-700);
 }
 
 .pos-filter-bar {

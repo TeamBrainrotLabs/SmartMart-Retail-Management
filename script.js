@@ -1,6 +1,12 @@
+/**
+ * ============================================================================
+ * SMARTMART – INTEGRATED RETAIL MANAGEMENT SYSTEM
+ * Core Application Logic, State Management, POS Billing & Reporting
+ * Git Lab 6 Project Submission
+ * ============================================================================
+ */
 
-
-
+// Global App Namespace & State Container
 const SmartMart = {
   // LocalStorage Keys
   KEYS: {
@@ -23,6 +29,8 @@ const SmartMart = {
     cart: [],
     selectedCustomer: null,
     redeemPoints: false,
+    orderDiscountPct: 0,
+    audioEnabled: true,
     paymentMethod: 'Cash',
     isCheckingOut: false,
     analyticsFilter: 'all',
@@ -684,8 +692,56 @@ const StorageManager = {
 };
 
 /* ============================================================================
-   2. UI NOTIFICATIONS, MODALS & TOAST MANAGER
+   2. AUDIO SYNTHESIZER (WEB AUDIO API) & UI MANAGERS
    ============================================================================ */
+const AudioManager = {
+  ctx: null,
+  init() {
+    if (!this.ctx && (window.AudioContext || window.webkitAudioContext)) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+  },
+  beep() {
+    if (!SmartMart.state.audioEnabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, this.ctx.currentTime); // A5 note
+      gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.12);
+    } catch (e) {}
+  },
+  chime() {
+    if (!SmartMart.state.audioEnabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [523.25, 659.25, 783.99].forEach((freq, idx) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+        gain.gain.setValueAtTime(0.15, now + idx * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now + idx * 0.08);
+        osc.stop(now + idx * 0.08 + 0.25);
+      });
+    } catch (e) {}
+  }
+};
+
 const UIManager = {
   showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
@@ -762,7 +818,20 @@ const App = {
     this.bindGlobalEvents();
     this.setupRoleManagement();
     this.refreshAllAlerts();
+    this.startLiveClock();
     this.switchView('dashboard');
+  },
+
+  startLiveClock() {
+    const clockElem = document.getElementById('header-live-clock');
+    if (!clockElem) return;
+    const update = () => {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      clockElem.innerHTML = `<i class="fa-regular fa-clock"></i> ${timeStr}`;
+    };
+    update();
+    setInterval(update, 1000);
   },
 
   bindGlobalEvents() {
@@ -851,6 +920,31 @@ const App = {
 
     // Global Search Bar in Header
     this.setupGlobalSearch();
+
+    // Fast POS Keyboard Shortcuts (F2: Scan focus, F4: Checkout, Esc: Close modals)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        if (SmartMart.state.activeView !== 'pos') {
+          this.switchView('pos');
+        }
+        const barcodeInput = document.getElementById('pos-barcode-input');
+        if (barcodeInput) {
+          barcodeInput.focus();
+          barcodeInput.select();
+        }
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        const completeBtn = document.getElementById('pos-complete-sale-btn');
+        if (completeBtn && !completeBtn.disabled && !SmartMart.state.isCheckingOut) {
+          POSModule.processCheckout();
+        }
+      } else if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active').forEach(modal => {
+          modal.classList.remove('active');
+        });
+      }
+    });
   },
 
   switchView(viewName) {
@@ -1510,6 +1604,7 @@ const POSModule = {
     }
 
     this.renderCart();
+    AudioManager.beep();
     UIManager.showToast(`Added ${product.name} to cart.`, 'success');
   },
 
@@ -1541,6 +1636,11 @@ const POSModule = {
   clearCart() {
     SmartMart.state.cart = [];
     SmartMart.state.redeemPoints = false;
+    SmartMart.state.orderDiscountPct = 0;
+    document.querySelectorAll('#pos-discount-pills .disc-pill').forEach((p, idx) => {
+      if (idx === 0) p.classList.add('active');
+      else p.classList.remove('active');
+    });
     const chk = document.getElementById('pos-redeem-points-chk');
     if (chk) chk.checked = false;
     this.renderCart();
@@ -1599,25 +1699,40 @@ const POSModule = {
     const taxRate = settings.taxRate || 5.0;
     const tax = (subtotal * taxRate) / 100;
 
-    let discount = 0;
+    const orderDiscountPct = SmartMart.state.orderDiscountPct || 0;
+    const orderDiscountAmt = (subtotal * orderDiscountPct) / 100;
+
+    let pointsDiscount = 0;
     if (SmartMart.state.selectedCustomer && SmartMart.state.redeemPoints) {
       const pointVal = settings.loyaltyRedemptionVal || 1.0;
       const maxDiscount = SmartMart.state.selectedCustomer.points * pointVal;
-      // Discount cannot exceed subtotal + tax
-      discount = Math.min(maxDiscount, subtotal + tax);
+      pointsDiscount = Math.min(maxDiscount, Math.max(0, subtotal + tax - orderDiscountAmt));
     }
 
-    const grandTotal = Math.max(0, subtotal + tax - discount);
+    const totalDiscount = orderDiscountAmt + pointsDiscount;
+    const grandTotal = Math.max(0, subtotal + tax - totalDiscount);
 
     document.getElementById('pos-subtotal').textContent = UIManager.formatCurrency(subtotal);
     document.getElementById('pos-tax').textContent = UIManager.formatCurrency(tax);
 
+    const orderDiscLine = document.getElementById('pos-order-discount-line');
+    if (orderDiscLine) {
+      if (orderDiscountAmt > 0) {
+        orderDiscLine.style.display = 'flex';
+        document.getElementById('pos-order-discount').textContent = `-${UIManager.formatCurrency(orderDiscountAmt)} (${orderDiscountPct}%)`;
+      } else {
+        orderDiscLine.style.display = 'none';
+      }
+    }
+
     const discountLine = document.getElementById('pos-discount-line');
-    if (discount > 0) {
-      discountLine.style.display = 'flex';
-      document.getElementById('pos-discount').textContent = `-${UIManager.formatCurrency(discount)}`;
-    } else {
-      discountLine.style.display = 'none';
+    if (discountLine) {
+      if (pointsDiscount > 0) {
+        discountLine.style.display = 'flex';
+        document.getElementById('pos-discount').textContent = `-${UIManager.formatCurrency(pointsDiscount)}`;
+      } else {
+        discountLine.style.display = 'none';
+      }
     }
 
     document.getElementById('pos-grand-total').textContent = UIManager.formatCurrency(grandTotal);
@@ -1737,6 +1852,31 @@ const POSModule = {
       };
     }
 
+    // Discount Pills Handling
+    const discPills = document.querySelectorAll('#pos-discount-pills .disc-pill');
+    discPills.forEach(pill => {
+      pill.onclick = () => {
+        discPills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        SmartMart.state.orderDiscountPct = parseFloat(pill.getAttribute('data-disc')) || 0;
+        const subtotal = SmartMart.state.cart.reduce((acc, i) => acc + i.total, 0);
+        this.calculateTotals(subtotal);
+      };
+    });
+
+    // Audio Toggle Button
+    const audioBtn = document.getElementById('pos-audio-toggle-btn');
+    const audioIcon = document.getElementById('pos-audio-icon');
+    if (audioBtn) {
+      audioBtn.onclick = () => {
+        SmartMart.state.audioEnabled = !SmartMart.state.audioEnabled;
+        if (audioIcon) {
+          audioIcon.className = SmartMart.state.audioEnabled ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark';
+        }
+        UIManager.showToast(SmartMart.state.audioEnabled ? 'POS Scanner Sound Enabled' : 'POS Scanner Sound Muted', 'info');
+      };
+    }
+
     // Payment Method Tabs
     const paymentTabs = document.getElementById('pos-payment-tabs');
     const cashCalc = document.getElementById('pos-cash-calculator');
@@ -1820,14 +1960,18 @@ const POSModule = {
     const subtotal = SmartMart.state.cart.reduce((acc, i) => acc + i.total, 0);
     const tax = (subtotal * (settings.taxRate || 5.0)) / 100;
 
+    const orderDiscountPct = SmartMart.state.orderDiscountPct || 0;
+    const orderDiscountAmt = (subtotal * orderDiscountPct) / 100;
+
     let pointsRedeemed = 0;
-    let discount = 0;
+    let pointsDiscount = 0;
     if (SmartMart.state.selectedCustomer && SmartMart.state.redeemPoints) {
       pointsRedeemed = SmartMart.state.selectedCustomer.points;
-      discount = Math.min(pointsRedeemed * (settings.loyaltyRedemptionVal || 1.0), subtotal + tax);
+      pointsDiscount = Math.min(pointsRedeemed * (settings.loyaltyRedemptionVal || 1.0), Math.max(0, subtotal + tax - orderDiscountAmt));
     }
 
-    const grandTotal = Math.max(0, subtotal + tax - discount);
+    const totalDiscount = orderDiscountAmt + pointsDiscount;
+    const grandTotal = Math.max(0, subtotal + tax - totalDiscount);
 
     // Validate cash tender if cash payment
     let tendered = grandTotal;
@@ -1933,7 +2077,7 @@ const POSModule = {
       })),
       subtotal,
       tax,
-      discount,
+      discount: totalDiscount,
       pointsRedeemed,
       grandTotal,
       paymentMethod: SmartMart.state.paymentMethod,
@@ -1950,6 +2094,9 @@ const POSModule = {
     StorageManager.set(SmartMart.KEYS.PRODUCTS, products);
     StorageManager.set(SmartMart.KEYS.STOCK_MOVEMENTS, movements);
     StorageManager.set(SmartMart.KEYS.SALES, sales);
+
+    // Audio chime confirmation
+    AudioManager.chime();
 
     UIManager.showToast(`Sale completed! Invoice ${invoiceNum} generated.`, 'success');
 
