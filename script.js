@@ -3,13 +3,52 @@
  * SMARTMART – INTEGRATED RETAIL MANAGEMENT SYSTEM
  * Core Application Logic, State Management, POS Billing & Reporting
  * Git Lab 6 Project Submission
+ *
+ * ----------------------------------------------------------------------------
+ * ORGANIZATIONAL CODING & ARCHITECTURAL STANDARDS:
+ * ----------------------------------------------------------------------------
+ * 1. LIMITING GLOBAL DATA:
+ *    - Rule: Only immutable application constants and designated module singletons
+ *      may be declared in global scope.
+ *    - All transient variables, operation flags, and cache registers must be
+ *      encapsulated within module scopes or function-local variables.
+ *    - Root application runtime state is centralized strictly in 'SmartMart.state'.
+ *
+ * 2. NAMING CONVENTIONS:
+ *    - Global Module Singletons: Start with a Capital letter (e.g., SmartMart,
+ *      StorageManager, UIManager, POSModule, ProductsModule).
+ *    - Global Constants: Declared in ALL_CAPS with underscores (e.g., STATUS_SUCCESS,
+ *      STATUS_FAILURE, CONSTANTS).
+ *    - Local Variables & Parameters: CamelCase starting with a lowercase letter
+ *      (e.g., productRecord, subtotalAmount, invoiceNumber).
+ *
+ * 3. MODULE HEADER CONTENTS:
+ *    - Every module begins with a standardized metadata block detailing:
+ *      Module name, Creation date, Author, Modification history, Synopsis,
+ *      Functions supported (with types), and Global variables accessed/modified.
+ *
+ * 4. ERROR RETURN CONVENTIONS & EXCEPTION HANDLING:
+ *    - Every state-modifying or validating function returns a consistent status code:
+ *        STATUS_SUCCESS = 1 (Operation completed successfully)
+ *        STATUS_FAILURE = 0 (Operation failed / validation rejected)
+ *    - Exceptions are caught locally, logged to diagnostic console, and accompanied
+ *      by user-friendly UI toast alerts.
  * ============================================================================
  */
 
-// Global App Namespace & State Container
-const SmartMart = {
-  // LocalStorage Keys
-  KEYS: {
+// Global Status Return Codes
+const STATUS_SUCCESS = 1;
+const STATUS_FAILURE = 0;
+
+// Immutable Global Application Constants
+const CONSTANTS = Object.freeze({
+  STATUS_SUCCESS: 1,
+  STATUS_FAILURE: 0,
+  DEFAULT_TAX_RATE: 5.0,
+  DEFAULT_CURRENCY: '₹',
+  DEFAULT_LOYALTY_SPEND_RATIO: 100,
+  DEFAULT_LOYALTY_REDEMPTION_VALUE: 1.0,
+  STORAGE_KEYS: Object.freeze({
     PRODUCTS: 'smartmart_products',
     CATEGORIES: 'smartmart_categories',
     SUPPLIERS: 'smartmart_suppliers',
@@ -20,9 +59,15 @@ const SmartMart = {
     LOYALTY_LEDGER: 'smartmart_loyalty_ledger',
     SETTINGS: 'smartmart_settings',
     ROLE: 'smartmart_role'
-  },
+  })
+});
 
-  // Active Runtime State
+// Global App Namespace & State Container (Capitalized Global Singleton)
+const SmartMart = {
+  // Aliased storage keys referencing immutable CONSTANTS
+  KEYS: CONSTANTS.STORAGE_KEYS,
+
+  // Centralized Active Runtime State
   state: {
     currentRole: 'admin', // admin | manager | cashier | inventory
     activeView: 'dashboard',
@@ -38,36 +83,74 @@ const SmartMart = {
   }
 };
 
-/* ============================================================================
-   1. SEED DATA & STORAGE LAYER
-   ============================================================================ */
+/**
+ * ============================================================================
+ * MODULE NAME: StorageManager
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Initial implementation of localStorage data persistence
+ *   - 2026-10-26: Standardized error return codes (1 = success, 0 = failure)
+ * SYNOPSIS:
+ *   Provides an abstraction layer over browser localStorage with error trapping,
+ *   automatic JSON serialization/deserialization, and demonstration database seeding.
+ * FUNCTIONS SUPPORTED:
+ *   - get(storageKey: string, fallbackData: any): any (retrieved object or fallback)
+ *   - set(storageKey: string, payloadValue: any): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - initDatabase(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - seedInitialData(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.KEYS (read-only access)
+ * ============================================================================
+ */
 const StorageManager = {
-  get(key, fallback = []) {
+  /**
+   * Retrieves data from localStorage with graceful fallback
+   * @param {string} storageKey - Key to retrieve
+   * @param {any} fallbackData - Value to return if missing or corrupt
+   * @returns {any}
+   */
+  get(storageKey, fallbackData = []) {
     try {
-      const data = localStorage.getItem(key);
-      return data ? JSON.parse(data) : fallback;
-    } catch (e) {
-      console.error(`Error reading ${key} from localStorage:`, e);
-      return fallback;
+      const serializedData = localStorage.getItem(storageKey);
+      return serializedData ? JSON.parse(serializedData) : fallbackData;
+    } catch (readError) {
+      console.error(`[StorageManager] Failed to read ${storageKey}:`, readError);
+      return fallbackData;
     }
   },
 
-  set(key, val) {
+  /**
+   * Stores data in localStorage with error handling
+   * @param {string} storageKey - Key to store under
+   * @param {any} payloadValue - Value to serialize and store
+   * @returns {number} STATUS_SUCCESS (1) on success, STATUS_FAILURE (0) on error
+   */
+  set(storageKey, payloadValue) {
     try {
-      localStorage.setItem(key, JSON.stringify(val));
-      return true;
-    } catch (e) {
-      console.error(`Error saving ${key} to localStorage:`, e);
-      return false;
+      localStorage.setItem(storageKey, JSON.stringify(payloadValue));
+      return STATUS_SUCCESS;
+    } catch (writeError) {
+      console.error(`[StorageManager] Failed to write ${storageKey}:`, writeError);
+      return STATUS_FAILURE;
     }
   },
 
+  /**
+   * Initializes database with seed records if unpopulated
+   * @returns {number} STATUS_SUCCESS (1)
+   */
   initDatabase() {
     if (!localStorage.getItem(SmartMart.KEYS.PRODUCTS)) {
-      this.seedInitialData();
+      return this.seedInitialData();
     }
+    return STATUS_SUCCESS;
   },
 
+  /**
+   * Seeds demo products, categories, suppliers, customers, and sales
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   seedInitialData() {
     console.log('[SmartMart] Seeding realistic supermarket demonstration database...');
 
@@ -688,131 +771,279 @@ const StorageManager = {
     this.set(SmartMart.KEYS.ROLE, 'admin');
 
     console.log('[SmartMart] Database initialized with 22 products and seed records.');
+    return STATUS_SUCCESS;
   }
 };
 
-/* ============================================================================
-   2. AUDIO SYNTHESIZER (WEB AUDIO API) & UI MANAGERS
-   ============================================================================ */
+/**
+ * ============================================================================
+ * MODULE NAME: AudioManager
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Initial implementation of synthesized sound feedback
+ *   - 2026-10-26: Standardized error return codes and module documentation
+ * SYNOPSIS:
+ *   Synthesizes non-blocking auditory signals (scanner beep and checkout chime)
+ *   via the browser's native Web Audio API with zero external audio dependencies.
+ * FUNCTIONS SUPPORTED:
+ *   - init(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - beep(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - chime(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.state.audioEnabled (read-only)
+ * ============================================================================
+ */
 const AudioManager = {
   ctx: null,
+
+  /**
+   * Initializes browser AudioContext safely
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   init() {
-    if (!this.ctx && (window.AudioContext || window.webkitAudioContext)) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      if (!this.ctx && (window.AudioContext || window.webkitAudioContext)) {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return STATUS_SUCCESS;
+    } catch (audioInitError) {
+      console.warn('[AudioManager] Web Audio initialization warning:', audioInitError);
+      return STATUS_FAILURE;
     }
   },
+
+  /**
+   * Synthesizes barcode scan beep
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   beep() {
-    if (!SmartMart.state.audioEnabled) return;
+    if (!SmartMart.state.audioEnabled) return STATUS_SUCCESS;
     try {
       this.init();
-      if (!this.ctx) return;
+      if (!this.ctx) return STATUS_FAILURE;
       if (this.ctx.state === 'suspended') this.ctx.resume();
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, this.ctx.currentTime); // A5 note
-      gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.12);
-    } catch (e) {}
+      const oscillator = this.ctx.createOscillator();
+      const gainNode = this.ctx.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, this.ctx.currentTime); // A5 note
+      gainNode.gain.setValueAtTime(0.12, this.ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+      oscillator.connect(gainNode);
+      gainNode.connect(this.ctx.destination);
+      oscillator.start();
+      oscillator.stop(this.ctx.currentTime + 0.12);
+      return STATUS_SUCCESS;
+    } catch (beepError) {
+      console.warn('[AudioManager] Beep synthesis ignored:', beepError);
+      return STATUS_FAILURE;
+    }
   },
+
+  /**
+   * Synthesizes sale completion harmonic chime
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   chime() {
-    if (!SmartMart.state.audioEnabled) return;
+    if (!SmartMart.state.audioEnabled) return STATUS_SUCCESS;
     try {
       this.init();
-      if (!this.ctx) return;
+      if (!this.ctx) return STATUS_FAILURE;
       if (this.ctx.state === 'suspended') this.ctx.resume();
-      const now = this.ctx.currentTime;
-      [523.25, 659.25, 783.99].forEach((freq, idx) => {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
-        gain.gain.setValueAtTime(0.15, now + idx * 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start(now + idx * 0.08);
-        osc.stop(now + idx * 0.08 + 0.25);
+      const currentAudioTime = this.ctx.currentTime;
+      [523.25, 659.25, 783.99].forEach((freqVal, stepIndex) => {
+        const chordOsc = this.ctx.createOscillator();
+        const chordGain = this.ctx.createGain();
+        chordOsc.type = 'triangle';
+        chordOsc.frequency.setValueAtTime(freqVal, currentAudioTime + stepIndex * 0.08);
+        chordGain.gain.setValueAtTime(0.15, currentAudioTime + stepIndex * 0.08);
+        chordGain.gain.exponentialRampToValueAtTime(0.001, currentAudioTime + stepIndex * 0.08 + 0.25);
+        chordOsc.connect(chordGain);
+        chordGain.connect(this.ctx.destination);
+        chordOsc.start(currentAudioTime + stepIndex * 0.08);
+        chordOsc.stop(currentAudioTime + stepIndex * 0.08 + 0.25);
       });
-    } catch (e) {}
+      return STATUS_SUCCESS;
+    } catch (chimeError) {
+      console.warn('[AudioManager] Chime synthesis ignored:', chimeError);
+      return STATUS_FAILURE;
+    }
   }
 };
 
+/**
+ * ============================================================================
+ * MODULE NAME: UIManager
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Initial implementation of alerts, modals and currency formatting
+ *   - 2026-10-26: Standardized error return codes (1 = success, 0 = failure)
+ * SYNOPSIS:
+ *   Handles common visual elements including toast notifications, modal dialogues,
+ *   currency formatting with localization, and expiry evaluations.
+ * FUNCTIONS SUPPORTED:
+ *   - showToast(toastMessage: string, toastType: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - openModal(modalId: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - closeModal(modalId: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - confirm(confirmTitle: string, confirmMessage: string, onConfirmCallback: Function): number
+ *   - formatCurrency(monetaryAmount: number): string
+ *   - isExpired(expiryDateString: string): boolean
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.KEYS.SETTINGS (read-only)
+ * ============================================================================
+ */
 const UIManager = {
-  showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
+  /**
+   * Displays non-intrusive floating toast notification
+   * @param {string} toastMessage - Text to display
+   * @param {string} toastType - 'info' | 'success' | 'warning' | 'error'
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
+  showToast(toastMessage, toastType = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) return STATUS_FAILURE;
 
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
+    try {
+      const toastElement = document.createElement('div');
+      toastElement.className = `toast ${toastType}`;
 
-    let icon = 'fa-circle-info';
-    if (type === 'success') icon = 'fa-circle-check';
-    if (type === 'error') icon = 'fa-triangle-exclamation';
-    if (type === 'warning') icon = 'fa-triangle-exclamation';
+      let iconClass = 'fa-circle-info';
+      if (toastType === 'success') iconClass = 'fa-circle-check';
+      if (toastType === 'error') iconClass = 'fa-triangle-exclamation';
+      if (toastType === 'warning') iconClass = 'fa-triangle-exclamation';
 
-    toast.innerHTML = `
-      <i class="fa-solid ${icon}"></i>
-      <span>${message}</span>
-    `;
+      toastElement.innerHTML = `
+        <i class="fa-solid ${iconClass}"></i>
+        <span>${toastMessage}</span>
+      `;
 
-    container.appendChild(toast);
+      toastContainer.appendChild(toastElement);
 
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      setTimeout(() => toast.remove(), 250);
-    }, 3500);
+      setTimeout(() => {
+        toastElement.style.opacity = '0';
+        setTimeout(() => toastElement.remove(), 250);
+      }, 3500);
+
+      return STATUS_SUCCESS;
+    } catch (toastError) {
+      console.error('[UIManager] showToast error:', toastError);
+      return STATUS_FAILURE;
+    }
   },
 
+  /**
+   * Opens dialog modal by ID
+   * @param {string} modalId - DOM element ID of the modal
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   openModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) modal.classList.add('active');
+    const modalTarget = document.getElementById(modalId);
+    if (!modalTarget) {
+      console.error(`[UIManager] openModal failed: #${modalId} not found`);
+      return STATUS_FAILURE;
+    }
+    modalTarget.classList.add('active');
+    return STATUS_SUCCESS;
   },
 
+  /**
+   * Closes dialog modal by ID
+   * @param {string} modalId - DOM element ID of the modal
+   * @returns {number} STATUS_SUCCESS (1) | STATUS_FAILURE (0)
+   */
   closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) modal.classList.remove('active');
+    const modalTarget = document.getElementById(modalId);
+    if (!modalTarget) {
+      console.error(`[UIManager] closeModal failed: #${modalId} not found`);
+      return STATUS_FAILURE;
+    }
+    modalTarget.classList.remove('active');
+    return STATUS_SUCCESS;
   },
 
-  confirm(title, message, onConfirmCallback) {
-    const modal = document.getElementById('confirm-modal');
-    document.getElementById('confirm-modal-title').textContent = title;
-    document.getElementById('confirm-modal-message').textContent = message;
+  /**
+   * Opens confirmation modal with action callback
+   * @param {string} confirmTitle - Header title
+   * @param {string} confirmMessage - Description prompt
+   * @param {Function} onConfirmCallback - Action upon user confirmation
+   * @returns {number} STATUS_SUCCESS (1)
+   */
+  confirm(confirmTitle, confirmMessage, onConfirmCallback) {
+    const confirmModal = document.getElementById('confirm-modal');
+    if (!confirmModal) return STATUS_FAILURE;
 
-    const yesBtn = document.getElementById('confirm-modal-yes-btn');
-    const newYesBtn = yesBtn.cloneNode(true);
-    yesBtn.parentNode.replaceChild(newYesBtn, yesBtn);
+    document.getElementById('confirm-modal-title').textContent = confirmTitle;
+    document.getElementById('confirm-modal-message').textContent = confirmMessage;
 
-    newYesBtn.addEventListener('click', () => {
+    const yesButton = document.getElementById('confirm-modal-yes-btn');
+    const newYesButton = yesButton.cloneNode(true);
+    yesButton.parentNode.replaceChild(newYesButton, yesButton);
+
+    newYesButton.addEventListener('click', () => {
       this.closeModal('confirm-modal');
       if (typeof onConfirmCallback === 'function') onConfirmCallback();
     });
 
-    this.openModal('confirm-modal');
+    return this.openModal('confirm-modal');
   },
 
-  formatCurrency(amount) {
-    const settings = StorageManager.get(SmartMart.KEYS.SETTINGS, { currencySymbol: '₹' });
-    const sym = settings.currencySymbol || '₹';
-    const num = Number(amount) || 0;
-    return `${sym}${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  /**
+   * Formats numeric amount to Indian Rupee or configured currency string
+   * @param {number} monetaryAmount - Raw amount
+   * @returns {string} Formatted string
+   */
+  formatCurrency(monetaryAmount) {
+    const activeSettings = StorageManager.get(SmartMart.KEYS.SETTINGS, { currencySymbol: '₹' });
+    const currencyPrefix = activeSettings.currencySymbol || '₹';
+    const parsedAmount = Number(monetaryAmount) || 0;
+    return `${currencyPrefix}${parsedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   },
 
-  isExpired(expiryDate) {
-    if (!expiryDate) return false;
-    const today = new Date().toISOString().split('T')[0];
-    return expiryDate < today;
+  /**
+   * Validates if product expiry date precedes today
+   * @param {string} expiryDateString - YYYY-MM-DD
+   * @returns {boolean}
+   */
+  isExpired(expiryDateString) {
+    if (!expiryDateString) return false;
+    const todayDateString = new Date().toISOString().split('T')[0];
+    return expiryDateString < todayDateString;
   }
 };
 
-/* ============================================================================
-   3. MAIN APPLICATION ORCHESTRATOR & NAVIGATION
-   ============================================================================ */
+/**
+ * ============================================================================
+ * MODULE NAME: App
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Navigation dispatching and role management
+ *   - 2026-10-26: Standardized error return codes and keyboard shortcut routing
+ * SYNOPSIS:
+ *   Root application orchestrator managing view transitions, role-based access
+ *   control (RBAC), global search indexing, keyboard shortcuts, and header clock.
+ * FUNCTIONS SUPPORTED:
+ *   - init(): number (STATUS_SUCCESS)
+ *   - startLiveClock(): number (STATUS_SUCCESS)
+ *   - bindGlobalEvents(): number (STATUS_SUCCESS)
+ *   - switchView(viewName: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - setupRoleManagement(): number (STATUS_SUCCESS)
+ *   - switchRole(roleName: string): number (STATUS_SUCCESS)
+ *   - updateRoleUI(roleName: string): number (STATUS_SUCCESS)
+ *   - checkRolePermission(viewName: string): boolean
+ *   - refreshAllAlerts(): number (total alerts counted)
+ *   - setupGlobalSearch(): number (STATUS_SUCCESS)
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.state.activeView (read/write)
+ *   - SmartMart.state.currentRole (read/write)
+ * ============================================================================
+ */
 const App = {
+  /**
+   * Initializes application components and switches to default view
+   * @returns {number} STATUS_SUCCESS (1)
+   */
   init() {
     StorageManager.initDatabase();
     this.bindGlobalEvents();
@@ -820,6 +1051,7 @@ const App = {
     this.refreshAllAlerts();
     this.startLiveClock();
     this.switchView('dashboard');
+    return STATUS_SUCCESS;
   },
 
   startLiveClock() {
@@ -951,7 +1183,7 @@ const App = {
     // Role Permissions Gate
     if (!this.checkRolePermission(viewName)) {
       UIManager.showToast(`Access Restricted: Active role (${SmartMart.state.currentRole}) lacks privilege for this section.`, 'warning');
-      return;
+      return STATUS_FAILURE;
     }
 
     SmartMart.state.activeView = viewName;
@@ -996,6 +1228,7 @@ const App = {
     if (viewName === 'settings') SettingsModule.init();
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    return STATUS_SUCCESS;
   },
 
   setupRoleManagement() {
@@ -1212,9 +1445,30 @@ const App = {
   }
 };
 
-/* ============================================================================
-   4. DASHBOARD MODULE
-   ============================================================================ */
+/**
+ * ============================================================================
+ * MODULE NAME: DashboardModule
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Initial dashboard analytics & KPI card renderers
+ *   - 2026-10-26: Standardized error return codes & module contract compliance
+ * SYNOPSIS:
+ *   Aggregates and displays store-wide retail metrics, including daily gross revenue,
+ *   active inventory units, critical stock/expiry alerts, recent transactions,
+ *   and interactive visual charts (Sales Trends & Category Breakdown).
+ * FUNCTIONS SUPPORTED:
+ *   - render(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - calculateKPIs(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - renderRecentTransactions(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - renderStockAlerts(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - renderCharts(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - bindEvents(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.KEYS (read-only access to storage identifiers)
+ *   - SmartMart.state.charts (modified: stores Chart.js instances)
+ * ============================================================================
+ */
 const DashboardModule = {
   render() {
     this.calculateKPIs();
@@ -1222,6 +1476,7 @@ const DashboardModule = {
     this.renderStockAlerts();
     this.renderCharts();
     this.bindEvents();
+    return STATUS_SUCCESS;
   },
 
   calculateKPIs() {
@@ -1250,18 +1505,19 @@ const DashboardModule = {
     document.getElementById('dash-low-stock-count').textContent = lowStockCount;
     document.getElementById('dash-out-stock-count').textContent = outOfStockCount;
     document.getElementById('dash-expired-count').textContent = expiredCount;
+    return STATUS_SUCCESS;
   },
 
   renderRecentTransactions() {
     const sales = StorageManager.get(SmartMart.KEYS.SALES, []);
     const tbody = document.getElementById('dash-recent-sales-tbody');
-    if (!tbody) return;
+    if (!tbody) return STATUS_FAILURE;
 
     const recent = sales.slice(-5).reverse();
 
     if (recent.length === 0) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted" style="padding:1.5rem;">No sales recorded yet.</td></tr>`;
-      return;
+      return STATUS_SUCCESS;
     }
 
     tbody.innerHTML = recent.map(s => {
@@ -1282,19 +1538,20 @@ const DashboardModule = {
         </tr>
       `;
     }).join('');
+    return STATUS_SUCCESS;
   },
 
   renderStockAlerts() {
     const products = StorageManager.get(SmartMart.KEYS.PRODUCTS, []);
     const tbody = document.getElementById('dash-alerts-tbody');
-    if (!tbody) return;
+    if (!tbody) return STATUS_FAILURE;
 
     // Filter items with stock <= minStock or expired
     const urgentItems = products.filter(p => p.stock <= p.minStock || UIManager.isExpired(p.expiry)).slice(0, 5);
 
     if (urgentItems.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted" style="padding:1.5rem;">All stock levels optimal.</td></tr>`;
-      return;
+      return STATUS_SUCCESS;
     }
 
     tbody.innerHTML = urgentItems.map(p => {
@@ -1320,12 +1577,13 @@ const DashboardModule = {
         </tr>
       `;
     }).join('');
+    return STATUS_SUCCESS;
   },
 
   renderCharts() {
     if (typeof Chart === 'undefined') {
       console.warn('Chart.js not loaded. Skipping chart rendering.');
-      return;
+      return STATUS_FAILURE;
     }
 
     // 1. Weekly Sales Trend Chart
@@ -1440,12 +1698,46 @@ const DashboardModule = {
         SuppliersModule.autoDraftLowStockPO();
       };
     }
+    return STATUS_SUCCESS;
   }
 };
 
-/* ============================================================================
-   5. POINT OF SALE (POS) BILLING MODULE
-   ============================================================================ */
+/**
+ * ============================================================================
+ * MODULE NAME: POSModule
+ * CREATION DATE: 2026-10-25
+ * AUTHOR: Harsh Vardhan (Retail Operations Engineering)
+ * MODIFICATION HISTORY:
+ *   - 2026-10-25: Interactive product catalog, shopping cart, cash tender & thermal receipt
+ *   - 2026-10-26: Standardized status codes (1 = success, 0 = failure), stock guards
+ * SYNOPSIS:
+ *   Manages the point-of-sale checkout counter, handling real-time catalog filtering,
+ *   barcode search, stock-guarded cart manipulation, tiered discounts, loyalty point
+ *   redemption, atomic inventory stock deduction, and thermal receipt generation.
+ * FUNCTIONS SUPPORTED:
+ *   - init(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - generateNewInvoiceId(): string (newly generated invoice identifier)
+ *   - renderCategoryPills(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - renderCatalog(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - renderCustomerDropdown(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - addToCart(productId: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - updateCartQty(productId: string, newQty: number): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - removeFromCart(productId: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - clearCart(): number (STATUS_SUCCESS)
+ *   - renderCart(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - processCheckout(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - viewInvoiceReceipt(invoiceNumber: string): number (STATUS_SUCCESS | STATUS_FAILURE)
+ *   - bindEvents(): number (STATUS_SUCCESS | STATUS_FAILURE)
+ * GLOBAL VARIABLES ACCESSED / MODIFIED:
+ *   - SmartMart.KEYS (read-only)
+ *   - SmartMart.state.cart (modified: active cart items)
+ *   - SmartMart.state.selectedCustomer (modified: active checkout customer)
+ *   - SmartMart.state.redeemPoints (modified: customer point deduction flag)
+ *   - SmartMart.state.orderDiscountPct (modified: order discount percentage)
+ *   - SmartMart.state.paymentMethod (read/write: payment method selection)
+ *   - SmartMart.state.isCheckingOut (read/write: checkout lock flag)
+ * ============================================================================
+ */
 const POSModule = {
   init() {
     this.renderCategoryPills();
@@ -1565,19 +1857,19 @@ const POSModule = {
 
     if (!product) {
       UIManager.showToast('Product not found.', 'error');
-      return;
+      return STATUS_FAILURE;
     }
 
     // Business Logic: Block Expired products
     if (UIManager.isExpired(product.expiry)) {
       UIManager.showToast(`Cannot sell "${product.name}": Product expired on ${product.expiry}.`, 'error');
-      return;
+      return STATUS_FAILURE;
     }
 
     // Business Logic: Block Out-of-Stock products
     if (product.stock <= 0) {
       UIManager.showToast(`Cannot add "${product.name}": Item is out of stock.`, 'error');
-      return;
+      return STATUS_FAILURE;
     }
 
     const existingIndex = SmartMart.state.cart.findIndex(i => i.id === product.id);
@@ -1586,7 +1878,7 @@ const POSModule = {
       // Check stock limit
       if (SmartMart.state.cart[existingIndex].qty + 1 > product.stock) {
         UIManager.showToast(`Cannot add more units: Only ${product.stock} units currently in stock.`, 'warning');
-        return;
+        return STATUS_FAILURE;
       }
       SmartMart.state.cart[existingIndex].qty += 1;
       SmartMart.state.cart[existingIndex].total = SmartMart.state.cart[existingIndex].qty * product.price;
@@ -1606,31 +1898,34 @@ const POSModule = {
     this.renderCart();
     AudioManager.beep();
     UIManager.showToast(`Added ${product.name} to cart.`, 'success');
+    return STATUS_SUCCESS;
   },
 
   updateCartQty(productId, newQty) {
     const itemIndex = SmartMart.state.cart.findIndex(i => i.id === productId);
-    if (itemIndex === -1) return;
+    if (itemIndex === -1) return STATUS_FAILURE;
 
     if (newQty <= 0) {
       this.removeFromCart(productId);
-      return;
+      return STATUS_SUCCESS;
     }
 
     const item = SmartMart.state.cart[itemIndex];
     if (newQty > item.stock) {
       UIManager.showToast(`Cannot exceed current stock limit of ${item.stock} units.`, 'warning');
-      return;
+      return STATUS_FAILURE;
     }
 
     item.qty = newQty;
     item.total = item.qty * item.price;
     this.renderCart();
+    return STATUS_SUCCESS;
   },
 
   removeFromCart(productId) {
     SmartMart.state.cart = SmartMart.state.cart.filter(i => i.id !== productId);
     this.renderCart();
+    return STATUS_SUCCESS;
   },
 
   clearCart() {
@@ -1644,6 +1939,7 @@ const POSModule = {
     const chk = document.getElementById('pos-redeem-points-chk');
     if (chk) chk.checked = false;
     this.renderCart();
+    return STATUS_SUCCESS;
   },
 
   renderCart() {
@@ -1942,10 +2238,10 @@ const POSModule = {
 
   processCheckout() {
     // Prevent duplicate checkout triggers
-    if (SmartMart.state.isCheckingOut) return;
+    if (SmartMart.state.isCheckingOut) return STATUS_FAILURE;
     if (SmartMart.state.cart.length === 0) {
       UIManager.showToast('Cart is empty. Add products to proceed.', 'warning');
-      return;
+      return STATUS_FAILURE;
     }
 
     SmartMart.state.isCheckingOut = true;
@@ -1981,7 +2277,7 @@ const POSModule = {
       if (isNaN(tenderedInputVal) || tenderedInputVal < grandTotal) {
         UIManager.showToast(`Insufficient cash tendered. Total is ${UIManager.formatCurrency(grandTotal)}.`, 'warning');
         SmartMart.state.isCheckingOut = false;
-        return;
+        return STATUS_FAILURE;
       }
       tendered = tenderedInputVal;
       change = tendered - grandTotal;
@@ -1998,7 +2294,7 @@ const POSModule = {
       if (!prod || prod.stock < item.qty) {
         UIManager.showToast(`Checkout failed: "${item.name}" only has ${prod ? prod.stock : 0} units left in stock!`, 'error');
         SmartMart.state.isCheckingOut = false;
-        return;
+        return STATUS_FAILURE;
       }
 
       // Deduct stock
@@ -2110,6 +2406,7 @@ const POSModule = {
     App.refreshAllAlerts();
 
     SmartMart.state.isCheckingOut = false;
+    return STATUS_SUCCESS;
   },
 
   viewInvoiceReceipt(invoiceNumber) {
@@ -2117,7 +2414,7 @@ const POSModule = {
     const sale = sales.find(s => s.invoiceNumber === invoiceNumber);
     if (!sale) {
       UIManager.showToast('Invoice record not found.', 'error');
-      return;
+      return STATUS_FAILURE;
     }
 
     const settings = StorageManager.get(SmartMart.KEYS.SETTINGS, {
@@ -2192,6 +2489,7 @@ const POSModule = {
     };
 
     UIManager.openModal('receipt-modal');
+    return STATUS_SUCCESS;
   }
 };
 
