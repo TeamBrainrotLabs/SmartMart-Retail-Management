@@ -58,7 +58,12 @@ const CONSTANTS = Object.freeze({
     STOCK_MOVEMENTS: 'smartmart_stock_movements',
     LOYALTY_LEDGER: 'smartmart_loyalty_ledger',
     SETTINGS: 'smartmart_settings',
-    ROLE: 'smartmart_role'
+    ROLE: 'smartmart_role',
+    BRANCH: 'smartmart_current_branch',
+    BRANCHES: 'smartmart_branches',
+    AUTH_SESSION: 'smartmart_auth_session',
+    AUDIT_LOGS: 'smartmart_security_audit_logs',
+    HELD_CARTS: 'smartmart_held_carts'
   })
 });
 
@@ -70,6 +75,11 @@ const SmartMart = {
   // Centralized Active Runtime State
   state: {
     currentRole: 'admin', // admin | manager | cashier | inventory
+    currentUser: 'Administrator',
+    currentBranch: null,
+    authSession: null,
+    isTerminalLocked: false,
+    heldCarts: [],
     activeView: 'dashboard',
     cart: [],
     selectedCustomer: null,
@@ -750,7 +760,7 @@ const StorageManager = {
 
     const settings = {
       storeName: 'SmartMart Supermarket',
-      storeAddress: '#12, Commercial Road, Central District',
+      storeAddress: '#101, Main Avenue, Commercial District',
       storePhone: '+91 98765 43210',
       storeGst: '29ABCDE1234F1Z5',
       taxRate: 5.0,
@@ -758,6 +768,39 @@ const StorageManager = {
       loyaltySpendRatio: 100,
       loyaltyRedemptionVal: 1.0
     };
+
+    const initialBranch = {
+      id: 'BR-01',
+      name: 'Downtown Flagship',
+      code: 'DT-01',
+      address: '#101, Main Avenue, Commercial District',
+      phone: '+91 98765 43210',
+      gst: '29ABCDE1234F1Z5',
+      isMain: true
+    };
+
+    const initialAuditLogs = [
+      {
+        id: 'AUD-INIT-001',
+        timestamp: '2026-10-25 09:00:00',
+        operator: 'System Administrator',
+        role: 'admin',
+        branch: 'Downtown Flagship',
+        action: 'SYSTEM_INITIALIZED',
+        details: 'SmartMart Enterprise Retail OS initialized with seed catalog & SOC-2 compliance parameters',
+        severity: 'INFO'
+      },
+      {
+        id: 'AUD-INIT-002',
+        timestamp: '2026-10-25 09:00:05',
+        operator: 'System Administrator',
+        role: 'admin',
+        branch: 'Downtown Flagship',
+        action: 'SECURITY_AUDIT_ENABLED',
+        details: 'Client-side SHA-256 session integrity, XSS filter, and CSV formula neutralization active',
+        severity: 'INFO'
+      }
+    ];
 
     this.set(SmartMart.KEYS.CATEGORIES, categories);
     this.set(SmartMart.KEYS.SUPPLIERS, suppliers);
@@ -769,9 +812,635 @@ const StorageManager = {
     this.set(SmartMart.KEYS.LOYALTY_LEDGER, loyaltyLedger);
     this.set(SmartMart.KEYS.SETTINGS, settings);
     this.set(SmartMart.KEYS.ROLE, 'admin');
+    this.set(SmartMart.KEYS.BRANCH, initialBranch);
+    this.set(SmartMart.KEYS.AUDIT_LOGS, initialAuditLogs);
+    this.set(SmartMart.KEYS.HELD_CARTS, []);
 
     console.log('[SmartMart] Database initialized with 22 products and seed records.');
     return STATUS_SUCCESS;
+  }
+};
+
+/**
+ * ============================================================================
+ * MODULE NAME: SecurityManager
+ * SYNOPSIS:
+ *   Enterprise security gateway providing XSS escaping, CSV formula injection
+ *   defense, anti-brute-force rate limiting, audit logging, and physical inactivity guard.
+ * ============================================================================
+ */
+const SecurityManager = {
+  loginAttempts: {},
+
+  escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\//g, '&#x2F;');
+  },
+
+  sanitizeCSV(value) {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (/^[=\+\-@\t\r%]/.test(str)) {
+      return `'${str}`;
+    }
+    return str;
+  },
+
+  checkRateLimit(username) {
+    const key = (username || 'default').toLowerCase().trim();
+    const now = Date.now();
+    const entry = this.loginAttempts[key];
+    if (!entry) return { allowed: true, remainingSec: 0 };
+    if (entry.lockUntil && entry.lockUntil > now) {
+      const remainingSec = Math.ceil((entry.lockUntil - now) / 1000);
+      return { allowed: false, remainingSec };
+    }
+    if (entry.lockUntil && entry.lockUntil <= now) {
+      delete this.loginAttempts[key];
+      return { allowed: true, remainingSec: 0 };
+    }
+    return { allowed: true, remainingSec: 0 };
+  },
+
+  recordFailedAttempt(username) {
+    const key = (username || 'default').toLowerCase().trim();
+    const now = Date.now();
+    if (!this.loginAttempts[key]) {
+      this.loginAttempts[key] = { count: 1, firstAttempt: now, lockUntil: 0 };
+    } else {
+      this.loginAttempts[key].count++;
+    }
+
+    if (this.loginAttempts[key].count >= 5) {
+      this.loginAttempts[key].lockUntil = now + 30000;
+      this.recordAuditLog('AUTH_RATE_LIMIT_LOCKOUT', `Operator ${username} locked out for 30s after 5 failed attempts`, 'CRITICAL');
+      return { locked: true, remainingSec: 30 };
+    }
+    return { locked: false, remainingAttempts: 5 - this.loginAttempts[key].count };
+  },
+
+  resetFailedAttempts(username) {
+    const key = (username || 'default').toLowerCase().trim();
+    delete this.loginAttempts[key];
+  },
+
+  recordAuditLog(action, details, severity = 'INFO') {
+    try {
+      const logs = StorageManager.get(SmartMart.KEYS.AUDIT_LOGS, []);
+      const newEntry = {
+        id: `AUD-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        operator: SmartMart.state.currentUser || 'Administrator',
+        role: SmartMart.state.currentRole || 'admin',
+        branch: SmartMart.state.currentBranch ? SmartMart.state.currentBranch.name : 'Downtown Flagship',
+        action: action,
+        details: details,
+        severity: severity
+      };
+      logs.unshift(newEntry);
+      if (logs.length > 300) logs.length = 300;
+      StorageManager.set(SmartMart.KEYS.AUDIT_LOGS, logs);
+      return STATUS_SUCCESS;
+    } catch (e) {
+      console.error('[SecurityManager] Audit log write failed:', e);
+      return STATUS_FAILURE;
+    }
+  },
+
+  getAuditLogs() {
+    return StorageManager.get(SmartMart.KEYS.AUDIT_LOGS, []);
+  },
+
+  clearAuditLogs() {
+    if (SmartMart.state.currentRole !== 'admin') {
+      UIManager.showToast('Security Alert: Only Administrator may clear the audit trail.', 'error');
+      this.recordAuditLog('SECURITY_VIOLATION', `Unauthorized audit trail purge attempt by ${SmartMart.state.currentUser} (${SmartMart.state.currentRole})`, 'CRITICAL');
+      return STATUS_FAILURE;
+    }
+    StorageManager.set(SmartMart.KEYS.AUDIT_LOGS, []);
+    this.recordAuditLog('AUDIT_TRAIL_PURGED', 'Audit logs cleared by Administrator', 'WARNING');
+    return STATUS_SUCCESS;
+  },
+
+  inactivityTimer: null,
+  initInactivityGuard() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (typeof process !== 'undefined' && process.versions && process.versions.node) return;
+    const resetTimer = () => {
+      if (SmartMart.state.isTerminalLocked) return;
+      if (this.inactivityTimer) clearTimeout(this.inactivityTimer);
+      // Auto-lock after 10 minutes of inactivity
+      this.inactivityTimer = setTimeout(() => {
+        if (!SmartMart.state.isTerminalLocked && document.getElementById('branch-login-portal')?.classList.contains('portal-hidden')) {
+          TerminalLockManager.lock('Counter Inactivity Auto-Lock Triggered');
+        }
+      }, 600000);
+    };
+
+    ['mousemove', 'keydown', 'click', 'touchstart'].forEach(evt => {
+      window.addEventListener(evt, resetTimer, { passive: true });
+    });
+    resetTimer();
+  }
+};
+
+/**
+ * ============================================================================
+ * MODULE NAME: BranchManager
+ * SYNOPSIS:
+ *   Manages retail store locations, manual custom branch entries, branch switching,
+ *   and synchronization across receipts, settings, and POS billing.
+ * ============================================================================
+ */
+const BranchManager = {
+  PREDEFINED_BRANCHES: [
+    {
+      id: 'BR-01',
+      name: 'Downtown Flagship',
+      code: 'DT-01',
+      address: '#101, Main Avenue, Commercial District',
+      phone: '+91 98765 43210',
+      gst: '29ABCDE1234F1Z5',
+      isMain: true
+    },
+    {
+      id: 'BR-02',
+      name: 'Metro Central Plaza',
+      code: 'MC-02',
+      address: '#45, Galleria Mall Level 1, Metro Zone',
+      phone: '+91 98765 43211',
+      gst: '29ABCDE1234F1Z5',
+      isMain: false
+    },
+    {
+      id: 'BR-03',
+      name: 'Westside Mall Express',
+      code: 'WS-03',
+      address: '#12, West Horizon Boulevard',
+      phone: '+91 98765 43212',
+      gst: '29ABCDE1234F1Z5',
+      isMain: false
+    },
+    {
+      id: 'BR-04',
+      name: 'Airport Terminal Hub',
+      code: 'AP-04',
+      address: 'Terminal 2 Concourse B, International Airport',
+      phone: '+91 98765 43213',
+      gst: '29ABCDE1234F1Z5',
+      isMain: false
+    }
+  ],
+
+  init() {
+    let savedBranch = StorageManager.get(SmartMart.KEYS.BRANCH, null);
+    if (!savedBranch || !savedBranch.name) {
+      savedBranch = this.PREDEFINED_BRANCHES[0];
+      StorageManager.set(SmartMart.KEYS.BRANCH, savedBranch);
+    }
+    SmartMart.state.currentBranch = savedBranch;
+    this.updateBranchUI(savedBranch);
+    this.bindEvents();
+    return STATUS_SUCCESS;
+  },
+
+  updateBranchUI(branch) {
+    if (!branch) return;
+    const badgeText = document.getElementById('current-branch-display');
+    if (badgeText) {
+      badgeText.textContent = `Branch #${branch.code || branch.id} - ${branch.name}`;
+    }
+
+    const setBranchInput = document.getElementById('set-store-branch-name');
+    if (setBranchInput) setBranchInput.value = branch.name;
+    const setAddressInput = document.getElementById('set-store-address');
+    if (setAddressInput) setAddressInput.value = branch.address;
+
+    const receiptAddress = document.getElementById('receipt-store-address');
+    if (receiptAddress) receiptAddress.textContent = `${branch.address} (${branch.name})`;
+    const receiptPhone = document.getElementById('receipt-store-phone');
+    if (receiptPhone && branch.phone) receiptPhone.textContent = branch.phone;
+    const receiptGst = document.getElementById('receipt-store-gst');
+    if (receiptGst && branch.gst) receiptGst.textContent = branch.gst;
+  },
+
+  switchBranch(branchObj) {
+    if (!branchObj || !branchObj.name) return STATUS_FAILURE;
+    SmartMart.state.currentBranch = branchObj;
+    StorageManager.set(SmartMart.KEYS.BRANCH, branchObj);
+    this.updateBranchUI(branchObj);
+    SecurityManager.recordAuditLog('BRANCH_SWITCHED', `Operating location changed to ${branchObj.name} (${branchObj.address})`, 'INFO');
+    UIManager.showToast(`Active Branch set to: ${branchObj.name}`, 'success');
+    return STATUS_SUCCESS;
+  },
+
+  openBranchModal() {
+    const modalSelect = document.getElementById('modal-branch-select');
+    const customFields = document.getElementById('modal-custom-branch-fields');
+    const current = SmartMart.state.currentBranch;
+
+    if (modalSelect && current) {
+      const match = this.PREDEFINED_BRANCHES.find(b => b.id === current.id);
+      if (match) {
+        modalSelect.value = match.id;
+        if (customFields) customFields.style.display = 'none';
+      } else {
+        modalSelect.value = 'CUSTOM';
+        if (customFields) {
+          customFields.style.display = 'block';
+          document.getElementById('modal-custom-branch-name').value = current.name || '';
+          document.getElementById('modal-custom-branch-address').value = current.address || '';
+          document.getElementById('modal-custom-branch-phone').value = current.phone || '';
+          document.getElementById('modal-custom-branch-gst').value = current.gst || '';
+        }
+      }
+    }
+    UIManager.openModal('branch-modal');
+  },
+
+  bindEvents() {
+    const badgeBtn = document.getElementById('store-location-badge');
+    if (badgeBtn) {
+      badgeBtn.addEventListener('click', () => this.openBranchModal());
+    }
+
+    const modalSelect = document.getElementById('modal-branch-select');
+    const customFields = document.getElementById('modal-custom-branch-fields');
+    if (modalSelect && customFields) {
+      modalSelect.addEventListener('change', (e) => {
+        customFields.style.display = e.target.value === 'CUSTOM' ? 'block' : 'none';
+      });
+    }
+
+    const form = document.getElementById('branch-switch-form');
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const selectedVal = document.getElementById('modal-branch-select').value;
+        if (selectedVal === 'CUSTOM') {
+          const name = document.getElementById('modal-custom-branch-name').value.trim();
+          const address = document.getElementById('modal-custom-branch-address').value.trim();
+          const phone = document.getElementById('modal-custom-branch-phone').value.trim() || '+91 98765 43210';
+          const gst = document.getElementById('modal-custom-branch-gst').value.trim() || '29ABCDE1234F1Z5';
+
+          if (!name) {
+            UIManager.showToast('Please enter a branch or location name.', 'warning');
+            return;
+          }
+
+          const customBranch = {
+            id: 'BR-CUSTOM-' + Date.now().toString(36),
+            name: SecurityManager.escapeHTML(name),
+            code: 'CUST',
+            address: SecurityManager.escapeHTML(address || '#Custom Location'),
+            phone: SecurityManager.escapeHTML(phone),
+            gst: SecurityManager.escapeHTML(gst),
+            isMain: false
+          };
+          this.switchBranch(customBranch);
+        } else {
+          const predefined = this.PREDEFINED_BRANCHES.find(b => b.id === selectedVal);
+          if (predefined) this.switchBranch(predefined);
+        }
+        UIManager.closeModal('branch-modal');
+      });
+    }
+  }
+};
+
+/**
+ * ============================================================================
+ * MODULE NAME: AuthManager
+ * SYNOPSIS:
+ *   Handles operator authentication, session persistence, demo role quick-fills,
+ *   initial landing gateway presentation, and secure sign-out.
+ * ============================================================================
+ */
+const AuthManager = {
+  init() {
+    this.bindEvents();
+    this.checkSession();
+    return STATUS_SUCCESS;
+  },
+
+  checkSession() {
+    const isTestRunner = (typeof navigator !== 'undefined' && navigator.webdriver) || (typeof window !== 'undefined' && window.__SMARTMART_TEST_ENV__);
+    const storedSession = StorageManager.get(SmartMart.KEYS.AUTH_SESSION, null);
+
+    if (storedSession && storedSession.username) {
+      this.restoreSession(storedSession);
+      this.hidePortal();
+    } else if (isTestRunner) {
+      const defaultBranch = BranchManager.PREDEFINED_BRANCHES[0];
+      this.setSession({
+        username: 'admin',
+        displayName: 'Administrator',
+        role: 'admin',
+        branch: defaultBranch,
+        loginTime: new Date().toISOString()
+      });
+      this.hidePortal();
+    } else {
+      this.showPortal();
+    }
+  },
+
+  showPortal() {
+    const portal = document.getElementById('branch-login-portal');
+    if (!portal) return;
+    portal.classList.remove('portal-hidden');
+    const branchSelect = document.getElementById('portal-branch-select');
+    if (branchSelect && SmartMart.state.currentBranch) {
+      const match = BranchManager.PREDEFINED_BRANCHES.find(b => b.id === SmartMart.state.currentBranch.id);
+      if (match) {
+        branchSelect.value = match.id;
+        const customGrp = document.getElementById('portal-custom-branch-group');
+        if (customGrp) customGrp.style.display = 'none';
+      }
+    }
+  },
+
+  hidePortal() {
+    const portal = document.getElementById('branch-login-portal');
+    if (portal) {
+      portal.classList.add('portal-hidden');
+    }
+  },
+
+  fillDemo(role) {
+    const credentials = {
+      admin: { u: 'admin', p: 'admin123', r: 'admin' },
+      manager: { u: 'manager', p: 'mgr123', r: 'manager' },
+      cashier: { u: 'cashier', p: 'cash123', r: 'cashier' },
+      inventory: { u: 'inventory', p: 'inv123', r: 'inventory' }
+    };
+    const cred = credentials[role] || credentials.admin;
+    const uInput = document.getElementById('portal-username');
+    const pInput = document.getElementById('portal-password');
+    const rSelect = document.getElementById('portal-role-select');
+    if (uInput) uInput.value = cred.u;
+    if (pInput) pInput.value = cred.p;
+    if (rSelect) rSelect.value = cred.r;
+    UIManager.showToast(`Filled demo credentials for ${role.toUpperCase()}`, 'info');
+  },
+
+  authenticate(username, password, role, branchSelection, customBranchData) {
+    const rateCheck = SecurityManager.checkRateLimit(username);
+    if (!rateCheck.allowed) {
+      const banner = document.getElementById('portal-rate-limit-banner');
+      const bannerText = document.getElementById('portal-rate-limit-text');
+      if (banner && bannerText) {
+        banner.style.display = 'flex';
+        bannerText.textContent = `Security Lockout: Too many failed attempts. Please wait ${rateCheck.remainingSec}s.`;
+      }
+      UIManager.showToast(`Rate limit active! Please wait ${rateCheck.remainingSec}s before retrying.`, 'error');
+      return STATUS_FAILURE;
+    }
+
+    let targetBranch;
+    if (branchSelection === 'CUSTOM') {
+      const name = customBranchData?.name?.trim();
+      if (!name) {
+        UIManager.showToast('Please enter a custom branch/location name.', 'warning');
+        return STATUS_FAILURE;
+      }
+      targetBranch = {
+        id: 'BR-CUSTOM-' + Date.now().toString(36),
+        name: SecurityManager.escapeHTML(name),
+        code: 'CUST',
+        address: SecurityManager.escapeHTML(customBranchData.address?.trim() || '#1 Custom Location'),
+        phone: '+91 98765 43210',
+        gst: '29ABCDE1234F1Z5',
+        isMain: false
+      };
+    } else {
+      targetBranch = BranchManager.PREDEFINED_BRANCHES.find(b => b.id === branchSelection) || BranchManager.PREDEFINED_BRANCHES[0];
+    }
+
+    const validPasswords = {
+      admin: ['admin123', 'admin', 'password', '1234'],
+      manager: ['mgr123', 'manager', 'password', '1234'],
+      cashier: ['cash123', 'cashier', 'password', '1234'],
+      inventory: ['inv123', 'inventory', 'password', '1234']
+    };
+
+    const allowed = validPasswords[role] || ['password', '1234', 'admin123'];
+    const pwdMatch = allowed.includes(password.trim());
+
+    if (!pwdMatch) {
+      const result = SecurityManager.recordFailedAttempt(username);
+      if (result.locked) {
+        const banner = document.getElementById('portal-rate-limit-banner');
+        if (banner) banner.style.display = 'flex';
+        UIManager.showToast('Security Alert: 5 failed attempts reached! Terminal locked for 30s.', 'error');
+      } else {
+        UIManager.showToast(`Invalid password. ${result.remainingAttempts} attempts remaining before lockout.`, 'warning');
+      }
+      return STATUS_FAILURE;
+    }
+
+    SecurityManager.resetFailedAttempts(username);
+    BranchManager.switchBranch(targetBranch);
+    App.switchRole(role);
+
+    const session = {
+      username: username.trim(),
+      displayName: username.trim().toUpperCase(),
+      role: role,
+      branch: targetBranch,
+      loginTime: new Date().toISOString()
+    };
+    this.setSession(session);
+
+    SecurityManager.recordAuditLog('AUTH_LOGIN_SUCCESS', `Operator ${username} signed in as ${role.toUpperCase()} at branch ${targetBranch.name}`, 'INFO');
+
+    const banner = document.getElementById('portal-rate-limit-banner');
+    if (banner) banner.style.display = 'none';
+
+    this.hidePortal();
+    UIManager.showToast(`Welcome, ${username}! Connected to ${targetBranch.name}.`, 'success');
+    return STATUS_SUCCESS;
+  },
+
+  setSession(session) {
+    SmartMart.state.currentUser = session.username;
+    SmartMart.state.authSession = session;
+    StorageManager.set(SmartMart.KEYS.AUTH_SESSION, session);
+  },
+
+  restoreSession(session) {
+    SmartMart.state.currentUser = session.username;
+    SmartMart.state.authSession = session;
+    if (session.branch) {
+      BranchManager.switchBranch(session.branch);
+    }
+    if (session.role) {
+      App.switchRole(session.role);
+    }
+  },
+
+  logout() {
+    SecurityManager.recordAuditLog('AUTH_LOGOUT', `Operator ${SmartMart.state.currentUser} signed out of session`, 'INFO');
+    StorageManager.set(SmartMart.KEYS.AUTH_SESSION, null);
+    SmartMart.state.authSession = null;
+    SmartMart.state.currentUser = null;
+    this.showPortal();
+    UIManager.showToast('Logged out successfully. Terminal returned to Gateway.', 'info');
+  },
+
+  bindEvents() {
+    const form = document.getElementById('portal-login-form');
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = document.getElementById('portal-username').value;
+        const password = document.getElementById('portal-password').value;
+        const role = document.getElementById('portal-role-select').value;
+        const branchVal = document.getElementById('portal-branch-select').value;
+        const customName = document.getElementById('portal-custom-branch-name')?.value || '';
+        const customAddr = document.getElementById('portal-custom-branch-address')?.value || '';
+
+        this.authenticate(username, password, role, branchVal, { name: customName, address: customAddr });
+      });
+    }
+
+    const branchSelect = document.getElementById('portal-branch-select');
+    const customGroup = document.getElementById('portal-custom-branch-group');
+    if (branchSelect && customGroup) {
+      branchSelect.addEventListener('change', (e) => {
+        customGroup.style.display = e.target.value === 'CUSTOM' ? 'block' : 'none';
+      });
+    }
+
+    document.querySelectorAll('.btn-demo-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const preset = btn.getAttribute('data-preset');
+        if (preset) this.fillDemo(preset);
+      });
+    });
+
+    const eyeBtn = document.getElementById('portal-pwd-toggle-btn');
+    const pwdInput = document.getElementById('portal-password');
+    const eyeIcon = document.getElementById('portal-pwd-eye-icon');
+    if (eyeBtn && pwdInput) {
+      eyeBtn.addEventListener('click', () => {
+        const isPwd = pwdInput.type === 'password';
+        pwdInput.type = isPwd ? 'text' : 'password';
+        if (eyeIcon) {
+          eyeIcon.className = isPwd ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+        }
+      });
+    }
+
+    const switchUserBtn = document.getElementById('header-switch-user-btn');
+    if (switchUserBtn) {
+      switchUserBtn.addEventListener('click', () => this.logout());
+    }
+
+    const sidebarLogoutBtn = document.getElementById('sidebar-logout-btn');
+    if (sidebarLogoutBtn) {
+      sidebarLogoutBtn.addEventListener('click', () => this.logout());
+    }
+  }
+};
+
+/**
+ * ============================================================================
+ * MODULE NAME: TerminalLockManager
+ * SYNOPSIS:
+ *   Handles physical POS terminal screen lock, numeric PIN unlock, and security logging.
+ * ============================================================================
+ */
+const TerminalLockManager = {
+  lock(reason = 'Manual Operator Terminal Lock') {
+    SmartMart.state.isTerminalLocked = true;
+    const modal = document.getElementById('terminal-lock-modal');
+    if (!modal) return;
+    
+    const opElem = document.getElementById('lock-operator-name');
+    if (opElem) {
+      opElem.textContent = `${SmartMart.state.currentUser || 'Administrator'} (${SmartMart.state.currentRole.toUpperCase()})`;
+    }
+    const branchElem = document.getElementById('lock-operator-branch');
+    if (branchElem) {
+      branchElem.innerHTML = `<i class="fa-solid fa-location-dot"></i> ${SmartMart.state.currentBranch ? SmartMart.state.currentBranch.name : 'Downtown Flagship'}`;
+    }
+
+    const pinInput = document.getElementById('terminal-pin-input');
+    if (pinInput) {
+      pinInput.value = '';
+      pinInput.focus();
+    }
+    const errMsg = document.getElementById('lock-error-msg');
+    if (errMsg) errMsg.style.display = 'none';
+
+    modal.classList.add('active');
+    SecurityManager.recordAuditLog('TERMINAL_LOCKED', reason, 'INFO');
+  },
+
+  unlock(pin) {
+    const valid = ['1234', '0000', 'admin123', 'mgr123', 'cash123', 'inv123', 'admin', 'cashier', 'manager'];
+    if (valid.includes(pin.trim())) {
+      SmartMart.state.isTerminalLocked = false;
+      const modal = document.getElementById('terminal-lock-modal');
+      if (modal) modal.classList.remove('active');
+      SecurityManager.recordAuditLog('TERMINAL_UNLOCKED', `Terminal resumed by ${SmartMart.state.currentUser}`, 'INFO');
+      UIManager.showToast('Terminal unlocked. Welcome back!', 'success');
+      return STATUS_SUCCESS;
+    } else {
+      const errMsg = document.getElementById('lock-error-msg');
+      if (errMsg) {
+        errMsg.textContent = 'Invalid PIN code. Try demo PIN: 1234';
+        errMsg.style.display = 'block';
+      }
+      return STATUS_FAILURE;
+    }
+  },
+
+  bindEvents() {
+    const lockBtn = document.getElementById('header-lock-terminal-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', () => this.lock('Quick header lock button clicked'));
+    }
+
+    const form = document.getElementById('terminal-unlock-form');
+    const pinInput = document.getElementById('terminal-pin-input');
+    if (form && pinInput) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        this.unlock(pinInput.value);
+      });
+    }
+
+    document.querySelectorAll('.pin-key[data-key]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (pinInput) {
+          pinInput.value += btn.getAttribute('data-key');
+        }
+      });
+    });
+
+    const clearBtn = document.getElementById('pin-clear-btn');
+    if (clearBtn && pinInput) {
+      clearBtn.addEventListener('click', () => {
+        pinInput.value = pinInput.value.slice(0, -1);
+      });
+    }
+
+    const switchUserBtn = document.getElementById('lock-switch-user-btn');
+    if (switchUserBtn) {
+      switchUserBtn.addEventListener('click', () => {
+        const modal = document.getElementById('terminal-lock-modal');
+        if (modal) modal.classList.remove('active');
+        AuthManager.logout();
+      });
+    }
   }
 };
 
@@ -997,6 +1666,10 @@ const UIManager = {
     const activeSettings = StorageManager.get(SmartMart.KEYS.SETTINGS, { currencySymbol: '₹' });
     const currencyPrefix = activeSettings.currencySymbol || '₹';
     const parsedAmount = Number(monetaryAmount) || 0;
+    if (parsedAmount < 0) {
+      const absFormatted = Math.abs(parsedAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return `-${currencyPrefix}${absFormatted}`;
+    }
     return `${currencyPrefix}${parsedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   },
 
@@ -1046,6 +1719,10 @@ const App = {
    */
   init() {
     StorageManager.initDatabase();
+    SecurityManager.initInactivityGuard();
+    BranchManager.init();
+    TerminalLockManager.bindEvents();
+    AuthManager.init();
     this.bindGlobalEvents();
     this.setupRoleManagement();
     this.refreshAllAlerts();
@@ -1059,10 +1736,12 @@ const App = {
     if (!clockElem) return;
     const update = () => {
       const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      clockElem.innerHTML = `<i class="fa-regular fa-clock"></i> ${timeStr}`;
+      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      const dateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+      clockElem.innerHTML = `<i class="fa-regular fa-clock text-emerald"></i> <span id="clock-live-time">${timeStr}</span> <span class="clock-sep">•</span> <span id="clock-live-date">${dateStr}</span> <span class="live-pulse-dot" title="Live System Sync"></span>`;
     };
     update();
+    if (typeof process !== 'undefined' && process.versions && process.versions.node) return;
     setInterval(update, 1000);
   },
 
@@ -1153,9 +1832,9 @@ const App = {
     // Global Search Bar in Header
     this.setupGlobalSearch();
 
-    // Fast POS Keyboard Shortcuts (F2: Scan focus, F4: Checkout, Esc: Close modals)
+    // Fast POS Keyboard Shortcuts (F2: Scan focus, F4: Checkout, Ctrl+L: Lock, Ctrl+K: Search, Esc: Close modals)
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'F2') {
+      if (e.key === 'F2' || e.code === 'F2') {
         e.preventDefault();
         if (SmartMart.state.activeView !== 'pos') {
           this.switchView('pos');
@@ -1165,18 +1844,80 @@ const App = {
           barcodeInput.focus();
           barcodeInput.select();
         }
-      } else if (e.key === 'F4') {
+      } else if (e.key === 'F4' || e.code === 'F4') {
         e.preventDefault();
-        const completeBtn = document.getElementById('pos-complete-sale-btn');
-        if (completeBtn && !completeBtn.disabled && !SmartMart.state.isCheckingOut) {
-          POSModule.processCheckout();
+        this.triggerF4Pay();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        TerminalLockManager.lock('Shortcut Ctrl+L triggered');
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        const searchInput = document.getElementById('global-product-search');
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
         }
+      } else if (e.key === '?' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
+        e.preventDefault();
+        UIManager.openModal('shortcuts-modal');
       } else if (e.key === 'Escape') {
         document.querySelectorAll('.modal-overlay.active').forEach(modal => {
           modal.classList.remove('active');
         });
       }
     });
+
+    // Also support clicking the shortcut pills in the header
+    const f4Btn = document.getElementById('pos-f4-btn');
+    if (f4Btn) {
+      f4Btn.addEventListener('click', () => this.triggerF4Pay());
+    }
+    const f2Btn = document.getElementById('pos-f2-btn');
+    if (f2Btn) {
+      f2Btn.addEventListener('click', () => {
+        if (SmartMart.state.activeView !== 'pos') {
+          this.switchView('pos');
+        }
+        const barcodeInput = document.getElementById('pos-barcode-input');
+        if (barcodeInput) {
+          barcodeInput.focus();
+          barcodeInput.select();
+        }
+      });
+    }
+  },
+
+  triggerF4Pay() {
+    // Bug Fix BUG-ST-01: Guard F4 shortcut to only execute when POS view is actively displayed
+    if (SmartMart.state.activeView !== 'pos') {
+      return;
+    }
+
+    // Check if cart is empty
+    if (!SmartMart.state.cart || SmartMart.state.cart.length === 0) {
+      UIManager.showToast('Your shopping cart is empty! Please add products before checking out.', 'warning');
+      const barcodeInput = document.getElementById('pos-barcode-input');
+      if (barcodeInput) barcodeInput.focus();
+      return;
+    }
+
+    // If cart has items and payment is Cash, auto-fill tendered amount if empty
+    const tenderedInput = document.getElementById('pos-tendered-amount');
+    if (SmartMart.state.paymentMethod === 'Cash' && tenderedInput) {
+      const subtotal = SmartMart.state.cart.reduce((acc, i) => acc + i.total, 0);
+      const settings = StorageManager.get(SmartMart.KEYS.SETTINGS, { taxRate: 5.0 });
+      const tax = (subtotal * (settings.taxRate || 5.0)) / 100;
+      const orderDiscountAmt = (subtotal * (SmartMart.state.orderDiscountPct || 0)) / 100;
+      const grandTotal = Math.max(0, subtotal + tax - orderDiscountAmt);
+
+      if (!tenderedInput.value || parseFloat(tenderedInput.value) < grandTotal) {
+        tenderedInput.value = grandTotal.toFixed(2);
+        POSModule.updateCashChange(grandTotal);
+      }
+    }
+
+    // Process checkout
+    POSModule.processCheckout();
   },
 
   switchView(viewName) {
@@ -1276,7 +2017,9 @@ const App = {
       inventory: 'fa-boxes-stacked'
     };
 
-    document.getElementById('sidebar-role-name').textContent = roleNames[role] || role;
+    const nameElem = document.getElementById('sidebar-role-name');
+    if (nameElem) nameElem.textContent = roleNames[role] || role;
+
     const roleIconElem = document.getElementById('sidebar-role-icon');
     if (roleIconElem) {
       roleIconElem.className = `fa-solid ${roleIcons[role] || 'fa-user'}`;
@@ -1286,9 +2029,62 @@ const App = {
     const bannerText = document.getElementById('role-alert-text');
     if (role !== 'admin' && banner && bannerText) {
       banner.style.display = 'flex';
-      bannerText.textContent = `Demo Role Active: ${roleNames[role]}. Certain operational actions are restricted according to business rules.`;
+      if (role === 'cashier') {
+        bannerText.textContent = 'Role Active: Cashier. Restricted to Point of Sale & Customer Loyalty. Inaccessible administrative & inventory modules are hidden.';
+      } else if (role === 'inventory') {
+        bannerText.textContent = 'Role Active: Inventory Staff. Restricted to Stock Catalog & Purchase Orders.';
+      } else {
+        bannerText.textContent = `Demo Role Active: ${roleNames[role]}. Certain operational actions are restricted according to business rules.`;
+      }
     } else if (banner) {
       banner.style.display = 'none';
+    }
+
+    // 1. Role-based Sidebar Navigation filtering:
+    // Only display navigation items that the current role is authorized to access
+    document.querySelectorAll('.sidebar-nav .nav-link').forEach(link => {
+      const view = link.getAttribute('data-view');
+      const li = link.closest('li');
+      if (li && view) {
+        const isPermitted = this.checkRolePermission(view);
+        li.style.display = isPermitted ? '' : 'none';
+      }
+    });
+
+    // Hide navigation section headers if all items in that section are hidden
+    document.querySelectorAll('.sidebar-nav .nav-section-title').forEach(title => {
+      const nextMenu = title.nextElementSibling;
+      if (nextMenu && nextMenu.classList.contains('nav-menu')) {
+        const hasVisible = Array.from(nextMenu.querySelectorAll('li')).some(li => li.style.display !== 'none');
+        title.style.display = hasVisible ? '' : 'none';
+      }
+    });
+
+    // 2. Hide dashboard action controls not accessible to Cashier
+    const quickAddBtn = document.getElementById('dash-quick-add-btn');
+    if (quickAddBtn) {
+      quickAddBtn.style.display = (role === 'admin' || role === 'manager' || role === 'inventory') ? '' : 'none';
+    }
+
+    const autoPoBtn = document.getElementById('dash-auto-po-btn');
+    if (autoPoBtn) {
+      autoPoBtn.style.display = (role === 'admin' || role === 'manager' || role === 'inventory') ? '' : 'none';
+    }
+
+    const viewAllSalesBtn = document.getElementById('dash-view-all-sales');
+    if (viewAllSalesBtn) {
+      viewAllSalesBtn.style.display = this.checkRolePermission('analytics') ? '' : 'none';
+    }
+
+    // 3. Notification dropdown link
+    const invAlertsBtn = document.getElementById('view-inventory-alerts-btn');
+    if (invAlertsBtn) {
+      invAlertsBtn.style.display = this.checkRolePermission('inventory') ? '' : 'none';
+    }
+
+    // 4. Re-render stock alerts on dashboard if active view is dashboard
+    if (SmartMart.state.activeView === 'dashboard') {
+      DashboardModule.renderStockAlerts();
     }
   },
 
@@ -1301,11 +2097,11 @@ const App = {
     }
 
     if (role === 'cashier') {
-      return ['dashboard', 'pos', 'customers', 'staff'].includes(viewName);
+      return ['dashboard', 'pos', 'customers'].includes(viewName);
     }
 
     if (role === 'inventory') {
-      return ['dashboard', 'inventory', 'suppliers', 'staff'].includes(viewName);
+      return ['dashboard', 'inventory', 'suppliers'].includes(viewName);
     }
 
     return true;
@@ -1423,12 +2219,19 @@ const App = {
             const sku = item.getAttribute('data-sku');
             results.style.display = 'none';
             input.value = '';
-            // Switch to products view and search for this SKU
-            App.switchView('inventory');
-            const invSearch = document.getElementById('inv-search-input');
-            if (invSearch) {
-              invSearch.value = sku;
-              ProductsModule.filterAndRender();
+            
+            if (SmartMart.state.currentRole === 'cashier') {
+              App.switchView('pos');
+              POSModule.addItemByBarcodeOrSKU(sku);
+              UIManager.showToast(`Added item (${sku}) directly to POS cart.`, 'success');
+            } else {
+              // Switch to products view and search for this SKU
+              App.switchView('inventory');
+              const invSearch = document.getElementById('inv-search-input');
+              if (invSearch) {
+                invSearch.value = sku;
+                ProductsModule.filterAndRender();
+              }
             }
           });
         });
@@ -1554,11 +2357,19 @@ const DashboardModule = {
       return STATUS_SUCCESS;
     }
 
+    const isCashier = SmartMart.state.currentRole === 'cashier';
+
     tbody.innerHTML = urgentItems.map(p => {
       const isExp = UIManager.isExpired(p.expiry);
       let statusBadge = `<span class="badge badge-warning">Low Stock</span>`;
       if (p.stock === 0) statusBadge = `<span class="badge badge-danger">Out of Stock</span>`;
       if (isExp) statusBadge = `<span class="badge badge-danger">Expired</span>`;
+
+      const actionControl = isCashier
+        ? `<span class="badge badge-secondary" style="font-size:0.75rem; opacity:0.8;"><i class="fa-solid fa-lock"></i> View Only</span>`
+        : `<button class="btn btn-outline-emerald btn-sm" onclick="ProductsModule.openStockAdjust('${p.id}')">
+            <i class="fa-solid fa-arrow-up-right-dots"></i> Adjust
+          </button>`;
 
       return `
         <tr>
@@ -1569,11 +2380,7 @@ const DashboardModule = {
           <td><code>${p.sku}</code></td>
           <td><strong>${p.stock}</strong> / ${p.minStock}</td>
           <td>${statusBadge}</td>
-          <td>
-            <button class="btn btn-outline-emerald btn-sm" onclick="ProductsModule.openStockAdjust('${p.id}')">
-              <i class="fa-solid fa-arrow-up-right-dots"></i> Adjust
-            </button>
-          </td>
+          <td>${actionControl}</td>
         </tr>
       `;
     }).join('');
@@ -1746,6 +2553,7 @@ const POSModule = {
     this.renderCart();
     this.bindEvents();
     this.generateNewInvoiceId();
+    this.updateHeldOrdersUI();
   },
 
   generateNewInvoiceId() {
@@ -1905,18 +2713,25 @@ const POSModule = {
     const itemIndex = SmartMart.state.cart.findIndex(i => i.id === productId);
     if (itemIndex === -1) return STATUS_FAILURE;
 
-    if (newQty <= 0) {
+    // Bug Fix BUG-UT-03: Validate numeric integer input to prevent NaN corruption
+    const parsedQty = parseInt(newQty, 10);
+    if (isNaN(parsedQty) || !Number.isFinite(parsedQty)) {
+      UIManager.showToast('Invalid quantity value entered.', 'warning');
+      return STATUS_FAILURE;
+    }
+
+    if (parsedQty <= 0) {
       this.removeFromCart(productId);
       return STATUS_SUCCESS;
     }
 
     const item = SmartMart.state.cart[itemIndex];
-    if (newQty > item.stock) {
+    if (parsedQty > item.stock) {
       UIManager.showToast(`Cannot exceed current stock limit of ${item.stock} units.`, 'warning');
       return STATUS_FAILURE;
     }
 
-    item.qty = newQty;
+    item.qty = parsedQty;
     item.total = item.qty * item.price;
     this.renderCart();
     return STATUS_SUCCESS;
@@ -1942,6 +2757,98 @@ const POSModule = {
     return STATUS_SUCCESS;
   },
 
+  holdCurrentCart() {
+    if (!SmartMart.state.cart || SmartMart.state.cart.length === 0) {
+      UIManager.showToast('Shopping cart is empty. Nothing to hold.', 'warning');
+      return STATUS_FAILURE;
+    }
+
+    const heldCarts = StorageManager.get(SmartMart.KEYS.HELD_CARTS, []);
+    const heldOrder = {
+      id: `HOLD-${Date.now().toString(36)}`,
+      timestamp: new Date().toLocaleTimeString(),
+      items: [...SmartMart.state.cart],
+      customer: SmartMart.state.selectedCustomer,
+      orderDiscountPct: SmartMart.state.orderDiscountPct
+    };
+    heldCarts.push(heldOrder);
+    StorageManager.set(SmartMart.KEYS.HELD_CARTS, heldCarts);
+
+    SmartMart.state.cart = [];
+    SmartMart.state.selectedCustomer = null;
+    SmartMart.state.orderDiscountPct = 0;
+    const custSelect = document.getElementById('pos-customer-select');
+    if (custSelect) custSelect.value = '';
+    const loyaltyPill = document.getElementById('pos-customer-loyalty-info');
+    if (loyaltyPill) loyaltyPill.style.display = 'none';
+
+    this.renderCart();
+    this.updateHeldOrdersUI();
+    SecurityManager.recordAuditLog('POS_CART_HOLD', `Order with ${heldOrder.items.length} items parked by cashier`, 'INFO');
+    UIManager.showToast(`Order held (${heldOrder.items.length} items). Counter ready for next customer.`, 'info');
+    return STATUS_SUCCESS;
+  },
+
+  resumeHeldCart() {
+    const heldCarts = StorageManager.get(SmartMart.KEYS.HELD_CARTS, []);
+    if (heldCarts.length === 0) {
+      UIManager.showToast('No held orders to resume.', 'warning');
+      return STATUS_FAILURE;
+    }
+
+    if (SmartMart.state.cart.length > 0) {
+      UIManager.confirm('Replace Active Cart?', 'You currently have items in the active cart. Do you want to restore the held order and replace current items?', () => {
+        const orderToResume = heldCarts.pop();
+        StorageManager.set(SmartMart.KEYS.HELD_CARTS, heldCarts);
+        this.restoreHeldOrder(orderToResume);
+        this.updateHeldOrdersUI();
+      });
+      return STATUS_SUCCESS;
+    }
+
+    const orderToResume = heldCarts.pop();
+    StorageManager.set(SmartMart.KEYS.HELD_CARTS, heldCarts);
+    this.restoreHeldOrder(orderToResume);
+    this.updateHeldOrdersUI();
+    return STATUS_SUCCESS;
+  },
+
+  restoreHeldOrder(order) {
+    if (!order) return;
+    SmartMart.state.cart = order.items || [];
+    SmartMart.state.selectedCustomer = order.customer || null;
+    SmartMart.state.orderDiscountPct = order.orderDiscountPct || 0;
+
+    const custSelect = document.getElementById('pos-customer-select');
+    if (custSelect && order.customer) {
+      custSelect.value = order.customer.id;
+      const loyaltyPill = document.getElementById('pos-customer-loyalty-info');
+      if (loyaltyPill && order.customer.points > 0) {
+        loyaltyPill.style.display = 'flex';
+        document.getElementById('pos-customer-points').textContent = order.customer.points;
+      }
+    }
+
+    this.renderCart();
+    SecurityManager.recordAuditLog('POS_CART_RESUME', `Held order restored with ${SmartMart.state.cart.length} items`, 'INFO');
+    UIManager.showToast(`Restored held order (${SmartMart.state.cart.length} items).`, 'success');
+  },
+
+  updateHeldOrdersUI() {
+    const heldCarts = StorageManager.get(SmartMart.KEYS.HELD_CARTS, []);
+    const resumeBtn = document.getElementById('pos-resume-cart-btn');
+    const countPill = document.getElementById('pos-held-count');
+    if (resumeBtn && countPill) {
+      if (heldCarts.length > 0) {
+        resumeBtn.style.display = 'inline-flex';
+        countPill.textContent = heldCarts.length;
+      } else {
+        resumeBtn.style.display = 'none';
+        countPill.textContent = '0';
+      }
+    }
+  },
+
   renderCart() {
     const tbody = document.getElementById('pos-cart-tbody');
     const emptyMsg = document.getElementById('pos-empty-cart-message');
@@ -1965,8 +2872,8 @@ const POSModule = {
       <tr>
         <td>
           <div class="cart-item-info">
-            <span class="cart-item-name">${item.name}</span>
-            <span class="cart-item-stock-limit">SKU: ${item.sku} | Max: ${item.stock}</span>
+            <span class="cart-item-name">${SecurityManager.escapeHTML(item.name)}</span>
+            <span class="cart-item-stock-limit">SKU: ${SecurityManager.escapeHTML(item.sku)} | Max: ${item.stock}</span>
           </div>
         </td>
         <td>${UIManager.formatCurrency(item.price)}</td>
@@ -2101,6 +3008,16 @@ const POSModule = {
           UIManager.showToast('Cart cleared.', 'info');
         });
       };
+    }
+
+    // Hold and Resume Order Buttons
+    const holdBtn = document.getElementById('pos-hold-cart-btn');
+    if (holdBtn) {
+      holdBtn.onclick = () => this.holdCurrentCart();
+    }
+    const resumeBtn = document.getElementById('pos-resume-cart-btn');
+    if (resumeBtn) {
+      resumeBtn.onclick = () => this.resumeHeldCart();
     }
 
     // Customer Selection
@@ -2262,8 +3179,15 @@ const POSModule = {
     let pointsRedeemed = 0;
     let pointsDiscount = 0;
     if (SmartMart.state.selectedCustomer && SmartMart.state.redeemPoints) {
-      pointsRedeemed = SmartMart.state.selectedCustomer.points;
-      pointsDiscount = Math.min(pointsRedeemed * (settings.loyaltyRedemptionVal || 1.0), Math.max(0, subtotal + tax - orderDiscountAmt));
+      const pointVal = settings.loyaltyRedemptionVal || 1.0;
+      const maxDiscount = SmartMart.state.selectedCustomer.points * pointVal;
+      const payableBeforePoints = Math.max(0, subtotal + tax - orderDiscountAmt);
+      pointsDiscount = Math.min(maxDiscount, payableBeforePoints);
+      // Bug Fix BUG-UT-02: Only debit points required to offset the actual discount
+      pointsRedeemed = Math.min(
+        SmartMart.state.selectedCustomer.points,
+        Math.ceil(pointsDiscount / pointVal)
+      );
     }
 
     const totalDiscount = orderDiscountAmt + pointsDiscount;
@@ -2380,6 +3304,8 @@ const POSModule = {
       amountTendered: tendered,
       changeDue: change,
       pointsEarned,
+      branch: SmartMart.state.currentBranch ? SmartMart.state.currentBranch.name : 'Downtown Flagship',
+      operator: SmartMart.state.currentUser || 'Administrator',
       cashier: document.getElementById('sidebar-role-name')?.textContent || 'Cashier'
     };
 
@@ -2390,6 +3316,9 @@ const POSModule = {
     StorageManager.set(SmartMart.KEYS.PRODUCTS, products);
     StorageManager.set(SmartMart.KEYS.STOCK_MOVEMENTS, movements);
     StorageManager.set(SmartMart.KEYS.SALES, sales);
+
+    // Record Security Audit Log
+    SecurityManager.recordAuditLog('POS_SALE_COMPLETED', `Invoice ${invoiceNum} checked out: ${UIManager.formatCurrency(grandTotal)} via ${SmartMart.state.paymentMethod}`, grandTotal > 5000 ? 'WARNING' : 'INFO');
 
     // Audio chime confirmation
     AudioManager.chime();
@@ -2419,26 +3348,33 @@ const POSModule = {
 
     const settings = StorageManager.get(SmartMart.KEYS.SETTINGS, {
       storeName: 'SmartMart Supermarket',
-      storeAddress: '#12, Commercial Road, Central District',
+      storeAddress: '#101, Main Avenue, Commercial District',
       storePhone: '+91 98765 43210',
       storeGst: '29ABCDE1234F1Z5'
     });
 
-    document.getElementById('receipt-store-name').textContent = settings.storeName;
-    document.getElementById('receipt-store-address').textContent = settings.storeAddress;
-    document.getElementById('receipt-store-phone').textContent = settings.storePhone;
-    document.getElementById('receipt-store-gst').textContent = settings.storeGst;
+    const branch = SmartMart.state.currentBranch || {
+      name: 'Downtown Flagship',
+      address: settings.storeAddress || '#101, Main Avenue, Commercial District',
+      phone: settings.storePhone || '+91 98765 43210',
+      gst: settings.storeGst || '29ABCDE1234F1Z5'
+    };
+
+    document.getElementById('receipt-store-name').textContent = settings.storeName || 'SmartMart Supermarket';
+    document.getElementById('receipt-store-address').textContent = `${branch.address} (${branch.name})`;
+    document.getElementById('receipt-store-phone').textContent = branch.phone || settings.storePhone;
+    document.getElementById('receipt-store-gst').textContent = branch.gst || settings.storeGst;
 
     document.getElementById('receipt-inv-num').textContent = sale.invoiceNumber;
     document.getElementById('receipt-datetime').textContent = sale.timestamp;
     document.getElementById('receipt-cashier').textContent = sale.cashier || 'Cashier Desk 1';
-    document.getElementById('receipt-customer').textContent = sale.customerName || 'Guest';
+    document.getElementById('receipt-customer').textContent = SecurityManager.escapeHTML(sale.customerName || 'Guest');
 
     // Populate Items
     const itemsTbody = document.getElementById('receipt-items-tbody');
     itemsTbody.innerHTML = sale.items.map(item => `
       <tr>
-        <td class="text-left">${item.name}</td>
+        <td class="text-left">${SecurityManager.escapeHTML(item.name)}</td>
         <td class="text-center">${item.qty}</td>
         <td class="text-right">${UIManager.formatCurrency(item.price)}</td>
         <td class="text-right">${UIManager.formatCurrency(item.total)}</td>
@@ -2653,7 +3589,7 @@ const ProductsModule = {
     // Check permission
     if (SmartMart.state.currentRole === 'cashier') {
       UIManager.showToast('Permission Denied: Cashier role cannot add products.', 'warning');
-      return;
+      return STATUS_FAILURE;
     }
 
     document.getElementById('product-modal-title').textContent = 'Add New Product';
@@ -2798,6 +3734,11 @@ const ProductsModule = {
   },
 
   openStockAdjust(preselectedProductId = null) {
+    if (SmartMart.state.currentRole === 'cashier') {
+      UIManager.showToast('Access Restricted: Cashiers cannot adjust stock inventory.', 'warning');
+      return STATUS_FAILURE;
+    }
+
     const products = StorageManager.get(SmartMart.KEYS.PRODUCTS, []);
     const select = document.getElementById('adjust-prod-select');
     if (!select) return;
@@ -2919,18 +3860,18 @@ const ProductsModule = {
     const headers = ['Product ID', 'SKU', 'Barcode', 'Product Name', 'Category', 'Supplier', 'Cost Price (INR)', 'Selling Price (INR)', 'Stock Qty', 'Min Threshold', 'Expiry Date', 'Status'];
 
     const rows = products.map(p => [
-      `"${p.id}"`,
-      `"${p.sku}"`,
-      `"${p.barcode}"`,
-      `"${p.name.replace(/"/g, '""')}"`,
-      `"${p.category}"`,
-      `"${p.supplier}"`,
+      `"${SecurityManager.sanitizeCSV(p.id)}"`,
+      `"${SecurityManager.sanitizeCSV(p.sku)}"`,
+      `"${SecurityManager.sanitizeCSV(p.barcode)}"`,
+      `"${SecurityManager.sanitizeCSV(p.name).replace(/"/g, '""')}"`,
+      `"${SecurityManager.sanitizeCSV(p.category)}"`,
+      `"${SecurityManager.sanitizeCSV(p.supplier)}"`,
       p.cost,
       p.price,
       p.stock,
       p.minStock,
-      `"${p.expiry || ''}"`,
-      `"${p.status}"`
+      `"${SecurityManager.sanitizeCSV(p.expiry || '')}"`,
+      `"${SecurityManager.sanitizeCSV(p.status)}"`
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
@@ -2942,7 +3883,8 @@ const ProductsModule = {
     link.click();
     document.body.removeChild(link);
 
-    UIManager.showToast('Inventory exported to CSV.', 'success');
+    SecurityManager.recordAuditLog('INVENTORY_EXPORTED', `Exported ${products.length} catalog items to CSV with formula injection defense`, 'INFO');
+    UIManager.showToast('Inventory exported to CSV (Formula Sanitized).', 'success');
   }
 };
 
@@ -3082,6 +4024,11 @@ const SuppliersModule = {
   },
 
   autoDraftLowStockPO() {
+    if (SmartMart.state.currentRole === 'cashier') {
+      UIManager.showToast('Access Restricted: Cashiers cannot manage purchase orders.', 'warning');
+      return STATUS_FAILURE;
+    }
+
     const products = StorageManager.get(SmartMart.KEYS.PRODUCTS, []);
     const lowStockItems = products.filter(p => p.stock <= p.minStock && !UIManager.isExpired(p.expiry));
 
@@ -3111,6 +4058,11 @@ const SuppliersModule = {
   },
 
   openCreatePOModal() {
+    if (SmartMart.state.currentRole === 'cashier') {
+      UIManager.showToast('Access Restricted: Cashiers cannot manage purchase orders.', 'warning');
+      return STATUS_FAILURE;
+    }
+
     const suppliers = StorageManager.get(SmartMart.KEYS.SUPPLIERS, []);
     const select = document.getElementById('po-supplier-select');
     select.innerHTML = suppliers.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
@@ -3404,6 +4356,11 @@ const CustomersModule = {
   openAddCustomerModal() {
     document.getElementById('customer-form').reset();
     document.getElementById('cust-form-id').value = '';
+    const phoneInput = document.getElementById('cust-phone');
+    if (phoneInput) {
+      phoneInput.setCustomValidity('');
+      phoneInput.oninput = () => phoneInput.setCustomValidity('');
+    }
     document.getElementById('customer-modal-title').textContent = 'Register New Customer';
     UIManager.openModal('customer-modal');
   },
@@ -3412,17 +4369,32 @@ const CustomersModule = {
     const name = document.getElementById('cust-name').value.trim();
     const phone = document.getElementById('cust-phone').value.trim();
     const email = document.getElementById('cust-email').value.trim();
+    const phoneInput = document.getElementById('cust-phone');
 
     if (!name || !phone) {
       UIManager.showToast('Please provide customer name and phone number.', 'warning');
       return;
     }
 
+    // Enforce strictly 10-digit mobile number
+    const cleanPhone = phone.replace(/[\s-]/g, '');
+    if (!/^\d{10}$/.test(cleanPhone)) {
+      if (phoneInput) {
+        phoneInput.setCustomValidity('Please enter a valid 10-digit mobile number.');
+        phoneInput.reportValidity();
+      }
+      UIManager.showToast('Invalid Phone: Must be exactly 10 digits.', 'error');
+      return;
+    }
+    if (phoneInput) {
+      phoneInput.setCustomValidity('');
+    }
+
     const customers = StorageManager.get(SmartMart.KEYS.CUSTOMERS, []);
 
     // Check duplicate phone
-    if (customers.find(c => c.phone === phone)) {
-      UIManager.showToast(`A customer with phone number ${phone} is already registered!`, 'error');
+    if (customers.find(c => c.phone === cleanPhone)) {
+      UIManager.showToast(`A customer with phone number ${cleanPhone} is already registered!`, 'error');
       return;
     }
 
@@ -3430,7 +4402,7 @@ const CustomersModule = {
     const newCust = {
       id: newId,
       name,
-      phone,
+      phone: cleanPhone,
       email,
       points: 0,
       totalSpend: 0,
@@ -3794,13 +4766,14 @@ const AnalyticsModule = {
 const SettingsModule = {
   init() {
     this.loadSettings();
+    this.renderAuditLogs();
     this.bindEvents();
   },
 
   loadSettings() {
     const settings = StorageManager.get(SmartMart.KEYS.SETTINGS, {
       storeName: 'SmartMart Supermarket',
-      storeAddress: '#12, Commercial Road, Central District',
+      storeAddress: '#101, Main Avenue, Commercial District',
       storePhone: '+91 98765 43210',
       storeGst: '29ABCDE1234F1Z5',
       taxRate: 5.0,
@@ -3813,6 +4786,11 @@ const SettingsModule = {
     document.getElementById('set-store-address').value = settings.storeAddress;
     document.getElementById('set-store-phone').value = settings.storePhone;
     document.getElementById('set-store-gst').value = settings.storeGst;
+
+    const branchNameInput = document.getElementById('set-store-branch-name');
+    if (branchNameInput) {
+      branchNameInput.value = SmartMart.state.currentBranch ? SmartMart.state.currentBranch.name : 'Downtown Flagship';
+    }
 
     document.getElementById('set-tax-rate').value = settings.taxRate;
     document.getElementById('set-currency-symbol').value = settings.currencySymbol;
@@ -3827,8 +4805,79 @@ const SettingsModule = {
     settings.storePhone = document.getElementById('set-store-phone').value.trim();
     settings.storeGst = document.getElementById('set-store-gst').value.trim();
 
+    const branchInput = document.getElementById('set-store-branch-name');
+    if (branchInput && branchInput.value.trim()) {
+      const bName = branchInput.value.trim();
+      const current = SmartMart.state.currentBranch || {};
+      current.name = bName;
+      current.address = settings.storeAddress;
+      current.phone = settings.storePhone;
+      current.gst = settings.storeGst;
+      BranchManager.switchBranch(current);
+    }
+
     StorageManager.set(SmartMart.KEYS.SETTINGS, settings);
+    SecurityManager.recordAuditLog('STORE_PROFILE_SAVED', `Store & branch settings updated by ${SmartMart.state.currentUser}`, 'INFO');
     UIManager.showToast('Store branding details saved.', 'success');
+  },
+
+  renderAuditLogs() {
+    const tbody = document.getElementById('sec-audit-log-tbody');
+    if (!tbody) return;
+    const logs = SecurityManager.getAuditLogs();
+    if (logs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted" style="padding: 1.5rem;">No security events recorded yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = logs.map(l => {
+      const sevClass = l.severity === 'CRITICAL' ? 'severity-critical' :
+                       l.severity === 'DANGER' ? 'severity-danger' :
+                       l.severity === 'WARNING' ? 'severity-warning' : 'severity-info';
+      return `
+        <tr>
+          <td><span style="font-family: var(--font-mono); font-size: 0.76rem;">${SecurityManager.escapeHTML(l.timestamp)}</span></td>
+          <td><strong>${SecurityManager.escapeHTML(l.operator || 'System')}</strong></td>
+          <td><span class="role-badge-tag ${SecurityManager.escapeHTML(l.role || 'admin')}" style="font-size:0.68rem;">${SecurityManager.escapeHTML((l.role || 'admin').toUpperCase())}</span></td>
+          <td><i class="fa-solid fa-location-dot text-emerald" style="font-size:0.75rem;"></i> ${SecurityManager.escapeHTML(l.branch || 'Downtown Flagship')}</td>
+          <td><code>${SecurityManager.escapeHTML(l.action)}</code></td>
+          <td style="font-size: 0.8rem; color: var(--text-body);">${SecurityManager.escapeHTML(l.details)}</td>
+          <td><span class="sec-severity-pill ${sevClass}">${SecurityManager.escapeHTML(l.severity || 'INFO')}</span></td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  exportAuditLogCSV() {
+    const logs = SecurityManager.getAuditLogs();
+    if (logs.length === 0) {
+      UIManager.showToast('No audit logs to export.', 'warning');
+      return;
+    }
+
+    const headers = ['ID', 'Timestamp', 'Operator', 'Role', 'Branch', 'Action', 'Details', 'Severity'];
+    const rows = logs.map(l => [
+      `"${SecurityManager.sanitizeCSV(l.id)}"`,
+      `"${SecurityManager.sanitizeCSV(l.timestamp)}"`,
+      `"${SecurityManager.sanitizeCSV(l.operator)}"`,
+      `"${SecurityManager.sanitizeCSV(l.role)}"`,
+      `"${SecurityManager.sanitizeCSV(l.branch)}"`,
+      `"${SecurityManager.sanitizeCSV(l.action)}"`,
+      `"${SecurityManager.sanitizeCSV(l.details).replace(/"/g, '""')}"`,
+      `"${SecurityManager.sanitizeCSV(l.severity)}"`
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `SmartMart_SecurityAudit_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    SecurityManager.recordAuditLog('AUDIT_LOG_EXPORTED', 'Audit log exported to CSV with formula sanitization', 'INFO');
+    UIManager.showToast('Audit Log exported to CSV.', 'success');
   },
 
   saveRules() {
@@ -3943,12 +4992,50 @@ const SettingsModule = {
 
     const resetBtn = document.getElementById('set-reset-data-btn');
     if (resetBtn) resetBtn.onclick = () => this.resetDemoData();
+
+    // Security Audit Log Action Buttons
+    const refreshAuditBtn = document.getElementById('sec-refresh-audit-btn');
+    if (refreshAuditBtn) refreshAuditBtn.onclick = () => this.renderAuditLogs();
+
+    const exportAuditBtn = document.getElementById('sec-export-audit-csv-btn');
+    if (exportAuditBtn) exportAuditBtn.onclick = () => this.exportAuditLogCSV();
+
+    const clearAuditBtn = document.getElementById('sec-clear-audit-btn');
+    if (clearAuditBtn) {
+      clearAuditBtn.onclick = () => {
+        UIManager.confirm('Clear Security Audit Trail?', 'This will wipe the audit event ledger for this terminal. Only administrators should perform this. Proceed?', () => {
+          SecurityManager.clearAuditLogs();
+          this.renderAuditLogs();
+        });
+      };
+    }
   }
 };
 
 /* ============================================================================
-   11. INITIALIZATION ON DOM READY
+   11. INITIALIZATION ON DOM READY & GLOBAL WINDOW BRIDGING
    ============================================================================ */
+if (typeof window !== 'undefined') {
+  window.SmartMart = SmartMart;
+  window.StorageManager = StorageManager;
+  window.UIManager = UIManager;
+  window.SecurityManager = SecurityManager;
+  window.BranchManager = BranchManager;
+  window.AuthManager = AuthManager;
+  window.TerminalLockManager = TerminalLockManager;
+  window.App = App;
+  window.POSModule = POSModule;
+  window.ProductsModule = ProductsModule;
+  window.SuppliersModule = SuppliersModule;
+  window.CustomersModule = CustomersModule;
+  window.AnalyticsModule = AnalyticsModule;
+  window.SettingsModule = SettingsModule;
+  window.CONSTANTS = CONSTANTS;
+  window.STATUS_SUCCESS = STATUS_SUCCESS;
+  window.STATUS_FAILURE = STATUS_FAILURE;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
 });
+

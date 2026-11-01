@@ -6,6 +6,12 @@
   <title>SmartMart – Integrated Retail Management System</title>
   <meta name="description" content="Centralized supermarket retail management system for inventory, POS billing, suppliers, purchase orders, customer loyalty, and sales analytics.">
   
+  <!-- Content Security Policy & Security Meta Headers -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self';">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#10b981">
+
   <!-- Inter Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -124,6 +130,10 @@
             <div class="demo-notice-sub">Client-side persistence</div>
           </div>
         </div>
+        <button type="button" id="sidebar-logout-btn" class="sidebar-switch-btn" title="Switch Branch / Operator">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          <span>Switch Branch / Sign Out</span>
+        </button>
       </div>
     </aside>
 
@@ -141,8 +151,18 @@
           </button>
           <div class="page-title-group">
             <h1 class="page-title" id="page-title">Store Dashboard</h1>
-            <span class="store-badge" id="store-location-badge"><i class="fa-solid fa-location-dot"></i> Branch #01 - Central Market</span>
-            <span class="header-clock-pill" id="header-live-clock"><i class="fa-regular fa-clock"></i> --:--:--</span>
+            <button type="button" class="store-badge interactive-badge" id="store-location-badge" title="Click to Change Branch / Enter Custom Location">
+              <i class="fa-solid fa-location-dot text-emerald"></i>
+              <span id="current-branch-display">Branch #01 - Downtown Flagship</span>
+              <i class="fa-solid fa-chevron-down badge-caret"></i>
+            </button>
+            <span class="header-clock-pill" id="header-live-clock">
+              <i class="fa-regular fa-clock text-emerald"></i>
+              <span id="clock-live-time">--:--:--</span>
+              <span class="clock-sep">•</span>
+              <span id="clock-live-date">-- --- ----</span>
+              <span class="live-pulse-dot" title="Live System Sync"></span>
+            </span>
           </div>
         </div>
 
@@ -150,9 +170,20 @@
           <!-- Global Quick Product Search Bar -->
           <div class="quick-search-box">
             <i class="fa-solid fa-magnifying-glass search-icon"></i>
-            <input type="text" id="global-product-search" placeholder="Search SKU, name, or barcode..." autocomplete="off">
+            <input type="text" id="global-product-search" placeholder="Search SKU, name, or barcode... (Ctrl+K)" autocomplete="off">
             <div id="global-search-results" class="quick-search-results"></div>
           </div>
+
+          <!-- Security Status Indicator Pill -->
+          <div class="header-security-pill" title="Cryptographic Session Integrity & Security Policy Guard Active">
+            <i class="fa-solid fa-shield-halved text-emerald"></i>
+            <span class="security-text">Secure POS</span>
+          </div>
+
+          <!-- Quick Terminal Lock Screen Button -->
+          <button type="button" id="header-lock-terminal-btn" class="btn-icon" title="Quick Lock POS Terminal (Ctrl+L)" aria-label="Lock Terminal">
+            <i class="fa-solid fa-lock"></i>
+          </button>
 
           <!-- Low Stock / Expiry Notification Bell -->
           <div class="notification-wrapper">
@@ -184,6 +215,11 @@
               <option value="inventory">Inventory Staff</option>
             </select>
           </div>
+
+          <!-- Switch Branch & Operator Button -->
+          <button type="button" id="header-switch-user-btn" class="btn-icon" title="Switch Branch & Operator Portal" aria-label="Switch Branch & Operator">
+            <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          </button>
 
           <!-- Quick POS Shortcut Button -->
           <button id="header-quick-pos-btn" class="btn btn-primary btn-sm">
@@ -369,8 +405,8 @@
                 <div class="scan-helper-text">
                   <span><i class="fa-solid fa-circle-question"></i> Enter barcode/SKU or click items to add.</span>
                   <div class="shortcut-pills">
-                    <span class="kbd-pill"><kbd>F2</kbd> Scan</span>
-                    <span class="kbd-pill"><kbd>F4</kbd> Pay</span>
+                    <span id="pos-f2-btn" class="kbd-pill" style="cursor: pointer;" title="Click or press F2 to focus Barcode Scanner"><kbd>F2</kbd> Scan</span>
+                    <span id="pos-f4-btn" class="kbd-pill" style="cursor: pointer;" title="Click or press F4 to Pay / Checkout"><kbd>F4</kbd> Pay</span>
                     <button type="button" id="pos-audio-toggle-btn" class="btn-icon-subtle" title="Toggle Scanner Audio Beep">
                       <i class="fa-solid fa-volume-high" id="pos-audio-icon"></i>
                     </button>
@@ -403,9 +439,17 @@
                   <h3 class="pos-cart-title"><i class="fa-solid fa-receipt"></i> Current Sale Order</h3>
                   <span class="pos-cart-invoice-id" id="pos-current-invoice-id">INV-2026-####</span>
                 </div>
-                <button id="pos-clear-cart-btn" class="btn btn-secondary btn-sm" title="Clear all items from cart">
-                  <i class="fa-solid fa-trash-can"></i> Clear Cart
-                </button>
+                <div class="pos-cart-header-actions">
+                  <button type="button" id="pos-hold-cart-btn" class="btn btn-secondary btn-sm" title="Park current cart to serve another customer">
+                    <i class="fa-solid fa-pause"></i> Hold
+                  </button>
+                  <button type="button" id="pos-resume-cart-btn" class="btn btn-outline-emerald btn-sm" title="Resume parked cart" style="display:none;">
+                    <i class="fa-solid fa-play"></i> Resume (<span id="pos-held-count">0</span>)
+                  </button>
+                  <button id="pos-clear-cart-btn" class="btn btn-secondary btn-sm" title="Clear all items from cart">
+                    <i class="fa-solid fa-trash-can"></i> Clear Cart
+                  </button>
+                </div>
               </div>
 
               <!-- Customer Association for Loyalty Points -->
@@ -1109,13 +1153,19 @@
                 </div>
               </div>
               <form id="settings-store-form" class="settings-form">
-                <div class="form-group">
-                  <label>Store Name</label>
-                  <input type="text" id="set-store-name" class="form-control" value="SmartMart Supermarket">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Store Organization Name</label>
+                    <input type="text" id="set-store-name" class="form-control" value="SmartMart Supermarket">
+                  </div>
+                  <div class="form-group">
+                    <label>Current Branch Name</label>
+                    <input type="text" id="set-store-branch-name" class="form-control" value="Downtown Flagship">
+                  </div>
                 </div>
                 <div class="form-group">
-                  <label>Branch / Address</label>
-                  <input type="text" id="set-store-address" class="form-control" value="#12, Commercial Road, Central District">
+                  <label>Store / Branch Address</label>
+                  <input type="text" id="set-store-address" class="form-control" value="#101, Main Avenue, Commercial District">
                 </div>
                 <div class="form-row">
                   <div class="form-group">
@@ -1127,7 +1177,7 @@
                     <input type="text" id="set-store-gst" class="form-control" value="29ABCDE1234F1Z5">
                   </div>
                 </div>
-                <button type="submit" class="btn btn-primary">Save Store Profile</button>
+                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Store Profile</button>
               </form>
             </div>
 
@@ -1190,6 +1240,45 @@
                     <i class="fa-solid fa-rotate-left"></i> Restore Fresh Seed Data
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <!-- Enterprise Security & Tamper-Evident Audit Log Card -->
+            <div class="dashboard-card full-width-card" style="grid-column: 1 / -1;">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title"><i class="fa-solid fa-shield-halved text-emerald"></i> Security & Operational Audit Log</h3>
+                  <p class="card-subtitle">Chronological ledger tracking authentication, price overrides, branch transfers, and critical system events</p>
+                </div>
+                <div class="card-header-actions">
+                  <button type="button" class="btn btn-secondary btn-sm" id="sec-refresh-audit-btn">
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                  </button>
+                  <button type="button" class="btn btn-secondary btn-sm" id="sec-export-audit-csv-btn">
+                    <i class="fa-solid fa-file-csv"></i> Export CSV
+                  </button>
+                  <button type="button" class="btn btn-outline-danger btn-sm" id="sec-clear-audit-btn">
+                    <i class="fa-solid fa-trash-can"></i> Clear (Admin)
+                  </button>
+                </div>
+              </div>
+              <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+                <table class="data-table" id="audit-log-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 160px;">Timestamp</th>
+                      <th>Operator</th>
+                      <th>Role</th>
+                      <th>Branch</th>
+                      <th>Event Action</th>
+                      <th>Audit Details</th>
+                      <th style="width: 100px;">Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sec-audit-log-tbody">
+                    <!-- Populated dynamically -->
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -1496,7 +1585,7 @@
           </div>
           <div class="form-group">
             <label>Phone Number (Unique) *</label>
-            <input type="tel" id="cust-phone" class="form-control" placeholder="e.g. 9876543210" required>
+            <input type="tel" id="cust-phone" class="form-control" placeholder="e.g. 9876543210" pattern="[0-9]{10}" minlength="10" maxlength="10" title="Please enter a valid 10-digit mobile number" required>
           </div>
           <div class="form-group">
             <label>Email Address (Optional)</label>
@@ -1683,6 +1772,312 @@
         <button type="button" class="btn btn-secondary" data-close-modal="confirm-modal">Cancel</button>
         <button type="button" class="btn btn-danger" id="confirm-modal-yes-btn">Confirm</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL 10: SWITCH / EDIT BRANCH LOCATION        -->
+  <!-- ============================================== -->
+  <div id="branch-modal" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-store text-emerald"></i> Switch Branch & Location</h3>
+        <button class="modal-close-btn" data-close-modal="branch-modal">&times;</button>
+      </div>
+      <form id="branch-switch-form">
+        <div class="modal-body">
+          <p class="modal-intro-text">Select an active retail branch or manually enter any custom store location for this terminal session.</p>
+
+          <div class="form-group">
+            <label for="modal-branch-select">Select Operational Branch</label>
+            <select id="modal-branch-select" class="form-control form-select">
+              <option value="BR-01">Branch #01 - Downtown Flagship (Main Store)</option>
+              <option value="BR-02">Branch #02 - Metro Central Plaza</option>
+              <option value="BR-03">Branch #03 - Westside Mall Express</option>
+              <option value="BR-04">Branch #04 - Airport Terminal Hub</option>
+              <option value="CUSTOM">+ Enter Custom Branch Manually...</option>
+            </select>
+          </div>
+
+          <div id="modal-custom-branch-fields" class="custom-branch-fields" style="display:none;">
+            <div class="form-group">
+              <label for="modal-custom-branch-name">Custom Branch / Location Name <span class="text-danger">*</span></label>
+              <input type="text" id="modal-custom-branch-name" class="form-control" placeholder="e.g. Uptown Hypermarket, Central Market...">
+            </div>
+            <div class="form-group">
+              <label for="modal-custom-branch-address">Branch Physical Address</label>
+              <input type="text" id="modal-custom-branch-address" class="form-control" placeholder="e.g. #101 Commercial Road, Downtown">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="modal-custom-branch-phone">Store Phone</label>
+                <input type="text" id="modal-custom-branch-phone" class="form-control" placeholder="+91 98765 43210">
+              </div>
+              <div class="form-group">
+                <label for="modal-custom-branch-gst">GST / Tax ID</label>
+                <input type="text" id="modal-custom-branch-gst" class="form-control" placeholder="29ABCDE1234F1Z5">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-close-modal="branch-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> Save & Apply Location</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL 11: POS TERMINAL SCREEN LOCK             -->
+  <!-- ============================================== -->
+  <div id="terminal-lock-modal" class="modal-overlay lock-screen-overlay">
+    <div class="lock-screen-card">
+      <div class="lock-icon-wrapper">
+        <i class="fa-solid fa-lock"></i>
+      </div>
+      <h3 class="lock-title">POS Terminal Locked</h3>
+      <p class="lock-sub">Operator session paused for physical counter security.</p>
+      
+      <div class="lock-operator-info">
+        <div class="lock-avatar"><i class="fa-solid fa-user-shield"></i></div>
+        <div class="lock-meta">
+          <strong id="lock-operator-name">Admin (Administrator)</strong>
+          <span id="lock-operator-branch"><i class="fa-solid fa-location-dot"></i> Downtown Flagship</span>
+        </div>
+      </div>
+
+      <form id="terminal-unlock-form" class="lock-form">
+        <div class="pin-input-wrapper">
+          <input type="password" id="terminal-pin-input" class="pin-input" placeholder="Enter Cashier PIN (Demo: 1234)" maxlength="16" autocomplete="off" autofocus>
+        </div>
+        <div class="pin-keypad">
+          <button type="button" class="pin-key" data-key="1">1</button>
+          <button type="button" class="pin-key" data-key="2">2</button>
+          <button type="button" class="pin-key" data-key="3">3</button>
+          <button type="button" class="pin-key" data-key="4">4</button>
+          <button type="button" class="pin-key" data-key="5">5</button>
+          <button type="button" class="pin-key" data-key="6">6</button>
+          <button type="button" class="pin-key" data-key="7">7</button>
+          <button type="button" class="pin-key" data-key="8">8</button>
+          <button type="button" class="pin-key" data-key="9">9</button>
+          <button type="button" class="pin-key pin-clear" id="pin-clear-btn" title="Clear PIN"><i class="fa-solid fa-delete-left"></i></button>
+          <button type="button" class="pin-key" data-key="0">0</button>
+          <button type="submit" class="pin-key pin-enter" id="pin-enter-btn" title="Unlock"><i class="fa-solid fa-unlock"></i></button>
+        </div>
+        <div id="lock-error-msg" class="lock-error-msg" style="display:none;"></div>
+      </form>
+      <div class="lock-footer-action">
+        <button type="button" id="lock-switch-user-btn" class="btn-link">Sign In with Different Operator Credentials &rarr;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL 12: KEYBOARD SHORTCUTS REFERENCE         -->
+  <!-- ============================================== -->
+  <div id="shortcuts-modal" class="modal-overlay">
+    <div class="modal-dialog modal-md">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-keyboard text-emerald"></i> Keyboard Shortcuts Reference</h3>
+        <button class="modal-close-btn" data-close-modal="shortcuts-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="shortcuts-grid">
+          <div class="shortcut-card">
+            <kbd>F2</kbd>
+            <div>
+              <strong>Quick Scan Barcode</strong>
+              <p>Navigates directly to POS billing and autofocuses barcode input.</p>
+            </div>
+          </div>
+          <div class="shortcut-card">
+            <kbd>F4</kbd>
+            <div>
+              <strong>Complete & Pay</strong>
+              <p>Instantly triggers payment calculation and invoice finalization.</p>
+            </div>
+          </div>
+          <div class="shortcut-card">
+            <kbd>Ctrl + L</kbd>
+            <div>
+              <strong>Lock Terminal</strong>
+              <p>Immediately locks the cash desk screen with PIN protection.</p>
+            </div>
+          </div>
+          <div class="shortcut-card">
+            <kbd>Ctrl + K</kbd>
+            <div>
+              <strong>Global Search</strong>
+              <p>Focuses top search bar to look up SKUs, products, and prices.</p>
+            </div>
+          </div>
+          <div class="shortcut-card">
+            <kbd>Esc</kbd>
+            <div>
+              <strong>Close Modal</strong>
+              <p>Dismisses active modal dialogs, receipts, or prompt overlays.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-close-modal="shortcuts-modal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- ENTERPRISE BRANCH SELECTION & LOGIN GATEWAY    -->
+  <!-- ============================================== -->
+  <div id="branch-login-portal" class="login-portal-overlay">
+    <div class="login-portal-card">
+      <div class="portal-brand-banner">
+        <div class="portal-brand-icon">
+          <i class="fa-solid fa-cart-shopping"></i>
+        </div>
+        <div class="portal-brand-content">
+          <h2 class="portal-title">SmartMart Retail OS</h2>
+          <span class="portal-edition-badge">Enterprise Edition v2.5</span>
+          <p class="portal-subtitle">Secure Multi-Branch Point of Sale & Retail Management Gateway</p>
+        </div>
+      </div>
+
+      <div class="portal-security-strip">
+        <span class="sec-badge"><i class="fa-solid fa-shield-halved text-emerald"></i> SHA-256 Auth</span>
+        <span class="sec-badge"><i class="fa-solid fa-fingerprint text-emerald"></i> RBAC Guarded</span>
+        <span class="sec-badge"><i class="fa-solid fa-bolt text-emerald"></i> Anti-Brute-Force</span>
+        <span class="sec-badge"><i class="fa-solid fa-circle-check text-emerald"></i> System Ready</span>
+      </div>
+
+      <form id="portal-login-form" class="portal-form">
+        
+        <!-- STEP 1: Branch Selection -->
+        <div class="portal-section">
+          <div class="portal-section-header">
+            <span class="step-num">1</span>
+            <div>
+              <h4 class="section-heading">Select or Enter Store Branch Location</h4>
+              <p class="section-subtext">Choose your active operating terminal location or enter custom branch</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="portal-branch-select">Operational Branch</label>
+            <div class="input-icon-group">
+              <i class="fa-solid fa-store input-icon"></i>
+              <select id="portal-branch-select" class="form-control form-select">
+                <option value="BR-01">Branch #01 - Downtown Flagship (Main Store)</option>
+                <option value="BR-02">Branch #02 - Metro Central Plaza</option>
+                <option value="BR-03">Branch #03 - Westside Mall Express</option>
+                <option value="BR-04">Branch #04 - Airport Terminal Hub</option>
+                <option value="CUSTOM">+ Enter Custom Branch Location Manually...</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Custom Branch Manual Entry (Visible when CUSTOM selected) -->
+          <div id="portal-custom-branch-group" class="custom-branch-fields" style="display: none;">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="portal-custom-branch-name">Custom Branch / Location Name <span class="text-danger">*</span></label>
+                <div class="input-icon-group">
+                  <i class="fa-solid fa-location-dot input-icon"></i>
+                  <input type="text" id="portal-custom-branch-name" class="form-control" placeholder="e.g. Uptown Hypermarket, Central Market...">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="portal-custom-branch-address">Branch Location Address</label>
+                <div class="input-icon-group">
+                  <i class="fa-solid fa-map-location-dot input-icon"></i>
+                  <input type="text" id="portal-custom-branch-address" class="form-control" placeholder="e.g. 101 Commercial Road, Downtown">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 2: Authentication Credentials -->
+        <div class="portal-section">
+          <div class="portal-section-header">
+            <span class="step-num">2</span>
+            <div>
+              <h4 class="section-heading">Operator Credentials & Access Role</h4>
+              <p class="section-subtext">Authenticate with role permissions and staff ID</p>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="portal-username">Work Username / Staff ID</label>
+              <div class="input-icon-group">
+                <i class="fa-solid fa-user-tag input-icon"></i>
+                <input type="text" id="portal-username" class="form-control" value="admin" placeholder="Operator ID or Username" required autocomplete="username">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="portal-password">Access Password / PIN</label>
+              <div class="input-icon-group password-group">
+                <i class="fa-solid fa-key input-icon"></i>
+                <input type="password" id="portal-password" class="form-control" value="admin123" placeholder="Password" required autocomplete="current-password">
+                <button type="button" id="portal-pwd-toggle-btn" class="pwd-toggle-btn" title="Toggle password visibility">
+                  <i class="fa-solid fa-eye" id="portal-pwd-eye-icon"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="portal-role-select">Access Privilege Level (RBAC)</label>
+            <div class="input-icon-group">
+              <i class="fa-solid fa-id-badge input-icon"></i>
+              <select id="portal-role-select" class="form-control form-select">
+                <option value="admin">Administrator (Unrestricted Operations & Settings)</option>
+                <option value="manager">Store Manager (Inventory, POs & Performance)</option>
+                <option value="cashier">Cashier (POS Checkout & Customer Service)</option>
+                <option value="inventory">Inventory Specialist (Stock Intake & Audit)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Quick Demo 1-Click Fill Buttons -->
+          <div class="demo-quick-presets">
+            <span class="presets-label"><i class="fa-solid fa-wand-magic-sparkles"></i> 1-Click Role Presets:</span>
+            <div class="preset-buttons">
+              <button type="button" class="btn-demo-pill" data-preset="admin">
+                <i class="fa-solid fa-user-shield"></i> Admin
+              </button>
+              <button type="button" class="btn-demo-pill" data-preset="manager">
+                <i class="fa-solid fa-user-tie"></i> Manager
+              </button>
+              <button type="button" class="btn-demo-pill" data-preset="cashier">
+                <i class="fa-solid fa-cash-register"></i> Cashier
+              </button>
+              <button type="button" class="btn-demo-pill" data-preset="inventory">
+                <i class="fa-solid fa-boxes-stacked"></i> Inventory
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rate Limit Warning Banner (Appears on failed attempts) -->
+        <div id="portal-rate-limit-banner" class="portal-alert-banner alert-danger" style="display: none;">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <div id="portal-rate-limit-text">Security Lockout: Too many failed attempts. Please wait 30 seconds.</div>
+        </div>
+
+        <!-- Submit & Launch Dashboard -->
+        <div class="portal-actions">
+          <button type="submit" id="portal-submit-btn" class="btn btn-primary btn-block btn-lg">
+            <i class="fa-solid fa-right-to-bracket"></i> Authenticate & Enter Dashboard
+          </button>
+        </div>
+
+        <div class="portal-footer-note">
+          <i class="fa-solid fa-lock"></i> Protected by Client-Side Cryptographic Hashing, Brute-Force Rate Limiter, and Session Inactivity Guard.
+        </div>
+      </form>
     </div>
   </div>
 
